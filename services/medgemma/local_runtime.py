@@ -115,7 +115,11 @@ class LlamaCpp:
             "messages": [{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(encoded.getvalue()).decode()}},
                 {"type": "text", "text": prompt}]}],
-            "response_format": {"type": "json_schema", "schema": self.schema},
+            # llama.cpp's OpenAI-compatible endpoint expects the schema inside
+            # response_format.json_schema.schema. Supplying schema at the top
+            # level silently falls back to an unconstrained JSON object.
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": "image_analysis", "strict": True, "schema": self.schema}},
         })
         response.raise_for_status()
         if len(response.content) > 200000:

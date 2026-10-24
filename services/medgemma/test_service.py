@@ -57,8 +57,17 @@ def test_image_only(client, payload):
     assert c.post("/analyze", json=payload).status_code == 200
     assert '"transcript": null' in model.prompts[0]
 
-@pytest.mark.parametrize("variant", ["malformed", "foreign_image", "foreign_transcript", "invented_quote", "visual_history", "anatomical_inference", "missing_limitation", "extra_diagnosis"])
-def test_invalid_output_is_redacted(client, payload, variant):
+@pytest.mark.parametrize(("variant", "stage"), [
+    ("malformed", "JSON parsing"),
+    ("foreign_image", "evidence validation"),
+    ("foreign_transcript", "evidence validation"),
+    ("invented_quote", "evidence validation"),
+    ("visual_history", "schema validation"),
+    ("anatomical_inference", "evidence validation"),
+    ("missing_limitation", "evidence validation"),
+    ("extra_diagnosis", "schema validation"),
+])
+def test_invalid_output_is_redacted(client, payload, variant, stage):
     c, model = client
     if variant == "malformed": model.result = "private raw failure data"
     elif variant == "foreign_image": model.result["characteristics"][0]["evidence"]["imageSourceId"] = "wrong"
@@ -72,7 +81,8 @@ def test_invalid_output_is_redacted(client, payload, variant):
     assert result.status_code == 502
     assert "private" not in result.text
     assert "no fallback" in result.text
-    assert "output validation failed" in result.text
+    assert f"{stage} failed" in result.text
+    assert result.headers["x-spotcheckmd-failure-stage"] == stage
 
 def test_unconfirmed_image_anatomy_is_discarded_not_rejected(client, payload):
     c, model = client
@@ -95,7 +105,7 @@ def test_failure_diagnostics_name_the_stage_without_content(client, payload, cap
         model.result = "private raw failure data"
         assert c.post("/analyze", json=payload).status_code == 502
     text = caplog.text
-    assert "stage=output validation" in text and "Invalid quote" in text
+    assert "stage=evidence validation" in text and "Invalid quote" in text
     assert "invalid JSON at character" in text and "completionTokens" in text
     assert "private" not in text
 

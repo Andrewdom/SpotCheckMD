@@ -67,7 +67,8 @@ def test_owned_loopback_runtime_and_cleanup(setup):
     parts = state.payload["messages"][0]["content"]
     assert parts[1]["text"] == "synthetic context only"
     assert base64.b64decode(parts[0]["image_url"]["url"].split(",")[1]).startswith(b"\x89PNG")
-    assert state.payload["response_format"]["schema"] == SCHEMA
+    assert state.payload["response_format"] == {"type": "json_schema", "json_schema": {
+        "name": "image_analysis", "strict": True, "schema": SCHEMA}}
     assert state.payload["cache_prompt"] is False
     runtime.close()
     assert state.terminated and state.client_closed and not keyfile.exists()

@@ -16,3 +16,4 @@ __pycache__/
 .venv-test/
 .venv-local/
 *.gguf
+.scin-data/

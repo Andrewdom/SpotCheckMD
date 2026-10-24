@@ -1,6 +1,6 @@
 # SpotCheckMD — teammate / LLM handoff
 
-Snapshot: October 23, 2026 (America/New_York). Implementation reference: commit `b80c974dbfa306450ab8c6a4ca2f9c2878575a3a`. This file is a portable context document: attach it to a teammate's LLM conversation, ideally with repository access. It contains no credentials or patient data.
+Snapshot: October 24, 2026 (America/New_York). Implementation reference: branch `feature/medgemma-contextual-analysis`. This file is a portable context document: attach it to a teammate's LLM conversation, ideally with repository access. It contains no credentials or patient data.
 
 ## Instructions to the receiving LLM
 
@@ -8,7 +8,7 @@ You are helping a hackathon team develop SpotCheckMD. Read this handoff, then in
 
 Start by identifying the current branch, working-tree changes, and assigned task. Preserve others' work. Explain intended application changes before making them. Use a dedicated branch and a pull request; never write directly to `main`, force-push over teammates, or merge without authorization. This handoff alone does not authorize additional features, paid deployments, model runs, or a merge.
 
-The owner most recently requested that testing stop so the team could see the changes. The implementation was published with known unresolved live-inference failures. Do not automatically restart expensive downloads, conversions, or live model tests merely because this document contains commands. Confirm the teammate's current task and follow their explicit instructions.
+The owner most recently requested that testing stop after the second SCIN case passed so the team could see the changes. The corrected integration completed four successful live requests across two images, while the remaining three prepared cases were intentionally left unrun. Do not automatically restart expensive downloads, conversions, or live model tests merely because this document contains commands. Confirm the teammate's current task and follow their explicit instructions.
 
 ## Product goal and boundaries
 
@@ -99,6 +99,7 @@ Fictional encounter + confirmation/consent
 | `services/medgemma/local_runtime.py` | Owned authenticated native CPU process, integrity/provenance checks |
 | `services/medgemma/prepare_local.py` | Pinned official-weight download/checksum/conversion preparation |
 | `scripts/verify-local-medgemma.ts` | Two-case real synthetic adapter verification; opt-in execution |
+| `scripts/prepare_scin.py`, `verify-scin-medgemma.ts` | Private licensed SCIN preparation and one-case local integration verification |
 | `scripts/compare-image-analysis.ts`, `summarize-comparison.ts` | Three-arm comparison collection and independently reviewed metrics |
 | `tests/`, `services/medgemma/test_*.py` | Mock/unit/API/evaluation/runtime regression coverage |
 | `docs/medgemma.md`, `evals/README.md` | Setup, limitations, and evaluation procedures |
@@ -149,15 +150,21 @@ These are historical results before the owner paused testing, not a fresh certif
 | Real image-only request via TS adapter | Failed after approximately 207 seconds |
 | Real image + fictional transcript request | Failed after approximately 182 seconds |
 
-**No successful structured live MedGemma analysis has been demonstrated.** Both requests used a generated non-patient geometric diagram; they were technical checks, not clinical cases. The root cause is unresolved. Do not assert that a specific layer, model quality, JSON grammar, timeout, or evidence validator caused the failures without reproducing and isolating it. The later error-reporting and anatomy-validation changes have since been re-tested with mocks only (see the update below); they have not been run against real MedGemma.
+**No successful structured live MedGemma analysis had been demonstrated at this historical snapshot.** Both requests used a generated non-patient geometric diagram; they were technical checks, not clinical cases. Their old reports discarded the stage, but a preserved controlled native response completed generation and returned the JSON Schema document rather than an analysis instance. Offline replay rejected it at schema validation. The llama.cpp request used the wrong schema wrapper and was corrected to `response_format.json_schema.schema`. The later SCIN verification below confirms that correction through the full integration path. The unconfirmed-anatomy normalization is later in the pipeline and could not have fixed a schema-document response.
 
 The model service/native child was stopped when testing paused. Do not assume any historical local server is still running. Credentials, model caches, converted weights, logs, and verification outputs were not pushed.
 
 Still unverified: real CUDA/Transformers inference, GPU memory/latency, Docker/hosted deployment, live OpenAI paths, phone capture, clinical-quality comparisons, and cost metrics. Mock success, conversion success, and HTTP health do not establish inference success or clinical suitability.
 
-## Update, October 23, 2026: suspected root cause, fix, and Mac verification
+## Update, October 24, 2026: private SCIN integration passed
 
-**Status: a fix is implemented and mock-tested. It is NOT confirmed against real MedGemma.** The two real requests above have not been re-run since the fix. Do not describe the failure as resolved until the Mac run below succeeds.
+The official licensed SCIN workflow in `docs/medgemma.md` prepared a private five-case manifest and ran two unique cases through the pinned local CPU model. Image-only and image-with-context variants passed for both cases: four successful reports covering image decoding, generation, JSON parsing, Python schema/evidence validation, TypeScript schema/evidence validation and source attribution. End-to-end times were approximately 110/96 seconds for the first case and 276/234 seconds for the second. The owner asked to stop after the second case passed, so the other three cases remain unrun. A request for the next case began before cancellation and produced no successful report.
+
+This is integration evidence for two inputs, not a clinical evaluation. No SCIN image, metadata, manifest, model response or credential was committed. Do not quote these runs as accuracy, fairness, diagnosis or validation results. The local model service was stopped after the run.
+
+## Historical update, October 23, 2026: suspected root cause and initial fix
+
+**Superseded status:** this section records the investigation that preceded the successful October 24 SCIN runs. Its proposed Mac procedure is retained for provenance and should not be started without a new owner request.
 
 What was found (on a Windows i5 machine without MedGemma weights, using the locally installed `gemma3:4b` via Ollama as a stand-in; same architecture and Q4 quantization class, but not MedGemma):
 
@@ -172,7 +179,7 @@ Changes made (all additive to the safety rules, none loosened):
 2. **Private failure diagnostics.** On any `/analyze` failure the wrapper logs one warning on logger `medgemma.diagnostics` (visible in the terminal running Uvicorn): stage, elapsed seconds, output length, and a content-free reason (violated schema rule and field path, JSON error position, HTTP status, exception class, or this module's own fixed `ValueError` messages). The llama.cpp runtime records `finishReason`, `promptTokens` and `completionTokens`. No generated text, quotes or input are logged, and the HTTP response is still generic.
 3. **`.gitattributes`** (`contracts/* text eol=lf`) so the contract-drift test passes on Windows checkouts that use `core.autocrlf=true`.
 
-Tests after these changes: 29 of 29 Node tests, typecheck and production build pass. Python: 25 of 26 pass; the one failure (`test_owned_loopback_runtime_and_cleanup`) asserts Unix `0o600` file mode and fails only on Windows. Expect all to pass on macOS. Re-run them: `npm ci && npm test && npm run typecheck`, then `python -m pytest services/medgemma -q` in the test environment.
+Tests after the final SCIN workflow changes on macOS: 29 of 29 Node tests, 29 of 29 Python tests and TypeScript checking passed. Python emitted one Starlette/httpx deprecation warning. Production build was not repeated for this final documentation and integration-script update.
 
 ### What the Mac teammate should do
 
@@ -203,7 +210,7 @@ No DICOM, 3D CT/MRI, whole-slide, PDF, video, lab, or vital-sign ingestion was a
 
 Preserve a modular pipeline: ingestion → transcription/observation adapters → specialty/modality policies → shared evidence validation → review → deterministic approved note → export adapter. Expand specialty policies and source types behind explicit contracts and independent evaluation. Do not rebuild the app around dermatology or introduce infrastructure without an agreed requirement.
 
-If assigned to resume MedGemma debugging, first isolate generation versus output-validation failure using only authorized synthetic inputs and private, redacted diagnostics. Preserve failing cases and runtime provenance. Never make a failing path appear successful by loosening evidence/review rules, silently changing models, or injecting fake production output. A GPU/hosted alternative is a proposed option, not an already working deployment.
+If assigned to resume MedGemma debugging, use the private SCIN workflow in `docs/medgemma.md` only with explicit dataset-license acknowledgement and local processing. Preserve failing cases, exact sanitized stages and runtime provenance. Never make a failing path appear successful by loosening evidence/review rules, silently changing models, or injecting fake production output. A GPU/hosted alternative is a proposed option, not an already working deployment.
 
 ## Checks when the teammate authorizes resuming work
 

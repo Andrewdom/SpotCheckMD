@@ -133,11 +133,13 @@ test("MedGemma transport validates model identity, structured data and timeout f
   const fetcher = (async (_url, init) => { sent = JSON.parse(String(init?.body)); return Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "test-revision", latencyMs: 5 }); }) as typeof fetch;
   const result = await medgemmaProvider(fetcher).analyze(request());
   assert.equal(result.model, "google/medgemma-1.5-4b-it"); assert.ok(sent.imageBase64); assert.deepEqual(sent.transcript, request().transcript);
-  await assert.rejects(medgemmaProvider(async () => { throw new DOMException("timeout", "TimeoutError"); }).analyze(request()), /No fallback/);
-  await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "different-model", modelRevision: "test", latencyMs: 1 })).analyze(request()), /No fallback/);
+  await assert.rejects(medgemmaProvider(async () => { throw new DOMException("timeout", "TimeoutError"); }).analyze(request()), /no fallback/i);
+  await assert.rejects(medgemmaProvider(async () => new Response(JSON.stringify({ detail: "redacted" }), { status: 502, headers: { "X-SpotCheckMD-Failure-Stage": "schema validation" } })).analyze(request()), /during schema validation/);
+  await assert.rejects(medgemmaProvider(async () => new Response(JSON.stringify({ detail: "redacted" }), { status: 502, headers: { "X-SpotCheckMD-Failure-Stage": "private invalid stage" } })).analyze(request()), /failed with status 502/);
+  await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "different-model", modelRevision: "test", latencyMs: 1 })).analyze(request()), /no fallback/i);
   const runtime = { engine: "llama.cpp", engineRevision: "a".repeat(40), converterRevision: "b".repeat(40), quantization: "Q4_K_M", modelSha256: "c".repeat(64), projectorSha256: "d".repeat(64) };
   const local = await medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime, latencyMs: 1 })).analyze(request());
   assert.deepEqual(local.runtime, runtime);
-  await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime: { ...runtime, quantization: "unknown" }, latencyMs: 1 })).analyze(request()), /No fallback/);
+  await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime: { ...runtime, quantization: "unknown" }, latencyMs: 1 })).analyze(request()), /no fallback/i);
   process.env.IMAGE_ANALYSIS_PROVIDER = "typo"; assert.throws(configuredImageProvider, /Unknown/); delete process.env.IMAGE_ANALYSIS_PROVIDER;
 });

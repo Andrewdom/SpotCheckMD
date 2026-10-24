@@ -127,6 +127,48 @@ With the service running, this command sends two real requests through the TypeS
 node --env-file=.env.local --import tsx scripts/verify-local-medgemma.ts /private/new-verification-dir --run-live
 ```
 
+## Private SCIN integration verification
+
+[SCIN](https://github.com/google-research-datasets/scin) contains real-person dermatology photographs and self-reported metadata. It is governed by the [SCIN Data Use License](https://github.com/google-research-datasets/scin/blob/main/LICENSE), which includes attribution requirements and prohibits re-identification. Images may be sensitive or graphic. Keep all downloaded images, metadata, generated manifests and model reports outside the repository. This workflow permits only the local MedGemma service; do not send SCIN material to OpenAI or another external provider.
+
+The preparation utility pins the official metadata object generations used for selection, excludes the publicly reported missing image, rejects paths outside the official image directory, validates JPEG/PNG decoding, and removes duplicate hashes within the prepared subset. Selection rotates deterministic skin-tone buckets when labels are available and requires a reported nonsensitive body location. Skin-tone metadata is used only for test-set selection. Dermatologist condition labels never enter the generated model manifest or transcript.
+
+Prepare one case in a new private directory after reviewing the license:
+
+```sh
+.venv-local/bin/python scripts/prepare_scin.py \
+  /private/scin-integration-001 --count 1 \
+  --run-download --accept-scin-license
+```
+
+This downloads the two pinned metadata CSVs (about 2.2 MB total) and only enough candidate images to obtain the requested number of valid, unique files. It writes `comparison-manifest.json` for the existing input contract and a separate `scin-provenance.json` containing source object paths, hashes, release, selection metadata and attribution. Both files are private dataset material. A failed candidate download/decoding check remains excluded from the manifest; the utility continues deterministically to the next candidate.
+
+Start with the image-only variant. The service must already be running with the local backend and the Node process must have the matching loopback URL/key:
+
+```sh
+node --env-file=.env.local --import tsx scripts/verify-scin-medgemma.ts \
+  /private/scin-integration-001/comparison-manifest.json \
+  /private/scin-image-only-001 \
+  --variant image-only --run-live
+```
+
+Only after that report has `status: "success"`, run the identical case with its clearly labeled SCIN self-report context:
+
+```sh
+node --env-file=.env.local --import tsx scripts/verify-scin-medgemma.ts \
+  /private/scin-integration-001/comparison-manifest.json \
+  /private/scin-context-001 \
+  --variant image-and-context --run-live
+```
+
+The report separates image decoding, generation, JSON parsing, Python schema/evidence validation, TypeScript schema/evidence validation and source attribution. It preserves sanitized failure stages and contains no clinical score. Keep failed reports. For a later 5–10 case set, rerun preparation with `--count`; do not silently reuse results from another metadata generation or runtime.
+
+### Local SCIN verification recorded October 24, 2026
+
+Two unique SCIN cases completed both local variants on the pinned CPU runtime. All four requests passed image decoding, generation, JSON parsing, Python schema/evidence validation, TypeScript schema/evidence validation and source-attribution checks. The measured end-to-end times were approximately 110 and 96 seconds for the first case, then 276 and 234 seconds for the second case (image-only and image-with-context respectively). A five-case private manifest was prepared, but the remaining three cases were left unrun when the project owner asked to stop testing after the second case passed. One next-case request had begun before the queue was interrupted; it was cancelled and has no successful report.
+
+These results establish that the corrected local transport and validation pipeline can return contract-valid output for those two inputs. They are not a measurement of clinical accuracy, fairness, diagnostic performance or readiness for clinical use. Images, metadata, manifests and reports remain in private ignored directories and were not committed.
+
 ## Hosted service
 
 The included Dockerfile packages this same API wrapper, not a generic Hugging Face/Vertex prediction endpoint. Build from the repository root:
@@ -167,6 +209,6 @@ The mock tests do not import/download Transformers weights or call external mode
 
 Checks completed before testing was paused: 28 Node mock/unit/API/evaluation tests and 24 Python service/runtime tests passed; Next.js production build, TypeScript checking, and the existing synthetic smoke workflow passed. Browser verification confirmed that specialty, anatomical location and physician context persist after reload. Python tests emitted a Starlette TestClient/httpx deprecation warning. The Python tests use fake generators/processes; their success does not demonstrate real inference. Subsequent small error-reporting changes have not received a complete rerun.
 
-Official gated model access, download and source checksum verification succeeded. The pinned local conversion and native CPU service startup succeeded, including authenticated health and unauthenticated-request rejection. However, both actual synthetic requests through the TypeScript adapter failed (image-only after approximately 207 seconds; image plus fictional transcript after approximately 182 seconds). The cause remains unresolved; no successful structured live analysis has been demonstrated. Testing was paused at the project owner's request to publish the work for team review.
+Official gated model access, download and source checksum verification succeeded. The pinned local conversion and native CPU service startup succeeded, including authenticated health and unauthenticated-request rejection. Both original synthetic TypeScript requests failed (image-only after approximately 207 seconds; image plus fictional transcript after approximately 182 seconds). Their old reports did not retain a stage. A preserved controlled native response from the same setup completed generation (`finish_reason=stop`) but returned the JSON Schema itself, which was rejected at schema validation. Inspection found that the llama.cpp request placed the schema outside the endpoint's required `response_format.json_schema.schema` wrapper. After correcting that wrapper, four real SCIN requests across two images and both context variants passed the complete integration contract as recorded above. This verifies the integration path for those requests and does not establish clinical correctness.
 
 CUDA memory/latency, Docker deployment, hosted inference, live OpenAI calls, phone capture, and clinical comparisons remain unverified. No clinical performance or cost results have been invented. Private model files, credentials and live verification artifacts are excluded from source control.

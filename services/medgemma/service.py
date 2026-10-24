@@ -73,8 +73,7 @@ def make_prompt(request: AnalysisRequest) -> str:
 
 UNCONFIRMED_ANATOMY_NOTE = "Model-proposed anatomical region was not visually confirmed and was discarded."
 
-def validate_result(value, request: AnalysisRequest):
-    VALIDATOR.validate(value)
+def validate_evidence(value, request: AnalysisRequest):
     # Keep in sync with validateImageAnalysis: drop an unverifiable image-sourced region instead of rejecting the analysis.
     region = value["anatomicalRegion"]
     if region["source"] == "image" and (not region["value"] or not region["visuallyConfirmed"]):
@@ -114,6 +113,10 @@ def validate_result(value, request: AnalysisRequest):
     if region["source"] == "unknown" and (region["value"] or region["visuallyConfirmed"]):
         raise ValueError("Invalid unknown anatomy")
     return value
+
+def validate_result(value, request: AnalysisRequest):
+    VALIDATOR.validate(value)
+    return validate_evidence(value, request)
 
 class MedGemma:
     def __init__(self):
@@ -208,12 +211,16 @@ def create_app(generator=None):
                 image = original.convert("RGB")
             stage = "generation"
             output = app.state.generator(image, make_prompt(request)).strip()
-            stage = "output validation"
+            stage = "JSON parsing"
             if output.startswith("```json\n") and output.endswith("```"):
                 output = output[8:-3].strip()
             if len(output) > 100000:
                 raise ValueError("Response too large")
-            result = validate_result(json.loads(output), request)
+            parsed = json.loads(output)
+            stage = "schema validation"
+            VALIDATOR.validate(parsed)
+            stage = "evidence validation"
+            result = validate_evidence(parsed, request)
             response = {"analysis": result, "model": MODEL_ID, "modelRevision": app.state.generator.revision, "latencyMs": (time.perf_counter() - started) * 1000}
             runtime = getattr(app.state.generator, "runtime", None)
             if runtime is not None:
@@ -223,7 +230,8 @@ def create_app(generator=None):
             # Operator-only, content-free diagnosis; the HTTP response stays generic.
             detail = {key: value for key, value in (getattr(app.state.generator, "last_diagnostics", None) or {}).items() if isinstance(value, (int, str))}
             diagnostics.warning("stage=%s error=%s elapsedSeconds=%.1f outputCharacters=%s generator=%s", stage, describe_failure(error), time.perf_counter() - started, len(output) if output is not None else None, detail)
-            raise HTTPException(502, f"MedGemma {stage} failed; no fallback was used") from None
+            raise HTTPException(502, f"MedGemma {stage} failed; no fallback was used",
+                                headers={"X-SpotCheckMD-Failure-Stage": stage}) from None
         finally:
             lock.release()
     return app

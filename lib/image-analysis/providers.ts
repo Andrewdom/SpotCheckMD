@@ -19,11 +19,26 @@ export function medgemmaProvider(fetcher: typeof fetch = fetch): ImageProvider {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({ imageSourceId: input.image.id, imageBase64: input.image.bytes.toString("base64"), mime: "image/jpeg", quality: input.image.quality, context: input.context, transcript: input.transcript }),
       });
-      if (!response.ok) throw new AppError(502, `MedGemma service returned ${response.status}; no fallback was used.`);
+      if (!response.ok) {
+        const reported = response.headers.get("x-spotcheckmd-failure-stage");
+        const allowed = new Set(["image decoding", "generation", "JSON parsing", "schema validation", "evidence validation"]);
+        const stage = reported && allowed.has(reported) ? ` during ${reported}` : "";
+        throw new AppError(502, `MedGemma service failed${stage} with status ${response.status}; no fallback was used.`);
+      }
       const raw = await response.text();
       if (raw.length > 200000) throw new Error("Oversized response");
-      const envelope = z.object({ analysis: z.unknown(), model: z.literal("google/medgemma-1.5-4b-it"), modelRevision: z.string().min(1), runtime: imageRuntimeSchema.optional(), latencyMs: z.number().finite().nonnegative() }).strict().parse(JSON.parse(raw));
-      return { ...envelope, analysis: validateImageAnalysis(envelope.analysis, input), contextRange: input.transcript ? { start: input.transcript.start, end: input.transcript.end } : null };
+      let envelope;
+      try {
+        envelope = z.object({ analysis: z.unknown(), model: z.literal("google/medgemma-1.5-4b-it"), modelRevision: z.string().min(1), runtime: imageRuntimeSchema.optional(), latencyMs: z.number().finite().nonnegative() }).strict().parse(JSON.parse(raw));
+      } catch {
+        throw new AppError(502, "MedGemma response-envelope parsing failed; no fallback was used.");
+      }
+      try {
+        return { ...envelope, analysis: validateImageAnalysis(envelope.analysis, input), contextRange: input.transcript ? { start: input.transcript.start, end: input.transcript.end } : null };
+      } catch (error) {
+        const stage = error instanceof z.ZodError ? "TypeScript schema validation" : "TypeScript evidence validation";
+        throw new AppError(502, `MedGemma ${stage} failed; no fallback was used.`);
+      }
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw new AppError(502, "MedGemma timed out, was unreachable, or returned invalid evidence/JSON. No fallback was used.");

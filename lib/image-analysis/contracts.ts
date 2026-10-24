@@ -45,8 +45,16 @@ export type ImageResult = { runtime?: z.infer<typeof imageRuntimeSchema>; inputC
 export type ImageProvider = { id: string; analyze(input: ImageRequest): Promise<ImageResult> };
 export const PROMPT_VERSION = "contextual-image-v1";
 
+export const UNCONFIRMED_ANATOMY_NOTE = "Model-proposed anatomical region was not visually confirmed and was discarded.";
+
 export function validateImageAnalysis(value: unknown, request: ImageRequest): ImageAnalysis {
   const result = imageAnalysisSchema.parse(value);
+  // An image-sourced region the model did not itself mark visually confirmed (e.g. a shape named as anatomy)
+  // is an unverifiable claim: drop it rather than rejecting the otherwise valid analysis. Never keeps it.
+  if (result.anatomicalRegion.source === "image" && (!result.anatomicalRegion.value || !result.anatomicalRegion.visuallyConfirmed)) {
+    result.anatomicalRegion = { value: "", source: "unknown", visuallyConfirmed: false, transcriptQuote: null };
+    if (result.limitations.length < 10) result.limitations.push(UNCONFIRMED_ANATOMY_NOTE);
+  }
   const transcript = request.transcript;
   const quote = (id: string | null, words: string | null) => {
     if (!transcript || id !== transcript.id || !words?.trim() || !transcript.text.includes(words)) throw new Error("Invalid transcript evidence");
@@ -69,7 +77,6 @@ export function validateImageAnalysis(value: unknown, request: ImageRequest): Im
   else if (region.transcriptQuote !== null) throw new Error("Unexpected anatomical quote");
   if (region.source === "clinician" && (!request.context.anatomicalLocation || region.value !== request.context.anatomicalLocation || region.visuallyConfirmed)) throw new Error("Invalid confirmed location");
   if (region.source === "unknown" && (region.value || region.visuallyConfirmed)) throw new Error("Unknown anatomy must remain unknown");
-  if (region.source === "image" && (!region.value || !region.visuallyConfirmed)) throw new Error("Invalid visual anatomy");
   return result;
 }
 

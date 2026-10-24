@@ -50,6 +50,7 @@ class LlamaCpp:
         self.client = None
         self.secrets_dir = None
         self.schema = schema
+        self.last_diagnostics = {}
         try:
             self._start()
         except Exception:
@@ -105,6 +106,7 @@ class LlamaCpp:
     def __call__(self, image, prompt):
         if self.process.poll() is not None:
             raise RuntimeError("Local runtime exited")
+        self.last_diagnostics = {}
         encoded = BytesIO()
         image.save(encoded, format="PNG")
         response = self.client.post("/v1/chat/completions", json={
@@ -118,7 +120,11 @@ class LlamaCpp:
         response.raise_for_status()
         if len(response.content) > 200000:
             raise ValueError("Oversized local response")
-        result = response.json()["choices"][0]
+        body = response.json()
+        result = body["choices"][0]
+        # Counts and finish reason only; never generated text.
+        usage = body.get("usage") or {}
+        self.last_diagnostics = {"finishReason": str(result.get("finish_reason")), "promptTokens": usage.get("prompt_tokens"), "completionTokens": usage.get("completion_tokens")}
         if result["finish_reason"] != "stop":
             raise ValueError("Incomplete local generation")
         return result["message"]["content"]

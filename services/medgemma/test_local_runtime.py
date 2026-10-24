@@ -45,7 +45,7 @@ def setup(tmp_path, monkeypatch):
         def post(self, path, json):
             state.payload = json
             return httpx.Response(200, request=httpx.Request("POST", "http://127.0.0.1/"),
-                                  json={"choices": [{"finish_reason": state.finish, "message": {"content": "{}"}}]})
+                                  json={"choices": [{"finish_reason": state.finish, "message": {"content": "{}"}}], "usage": {"prompt_tokens": 7, "completion_tokens": 3}})
         def close(self): state.client_closed = True
     state.finish = "stop"
     monkeypatch.setattr(local.httpx, "Client", Client)
@@ -104,6 +104,7 @@ def test_truncated_generation_rejected(setup):
         state.finish = "length"
         with pytest.raises(ValueError, match="Incomplete"):
             runtime(Image.new("RGB", (16, 16)), "synthetic")
+        assert runtime.last_diagnostics == {"finishReason": "length", "promptTokens": 7, "completionTokens": 3}
     finally: runtime.close()
 
 def test_unknown_backend_fails_without_fallback(monkeypatch):

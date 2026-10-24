@@ -74,6 +74,31 @@ def test_invalid_output_is_redacted(client, payload, variant):
     assert "no fallback" in result.text
     assert "output validation failed" in result.text
 
+def test_unconfirmed_image_anatomy_is_discarded_not_rejected(client, payload):
+    c, model = client
+    model.result["anatomicalRegion"] = {"value": "circle", "source": "image", "visuallyConfirmed": False, "transcriptQuote": None}
+    result = c.post("/analyze", json=payload)
+    assert result.status_code == 200, result.text
+    analysis = result.json()["analysis"]
+    assert analysis["anatomicalRegion"] == {"value": "", "source": "unknown", "visuallyConfirmed": False, "transcriptQuote": None}
+    assert "discarded" in analysis["limitations"][-1]
+    model.result["anatomicalRegion"] = {"value": "forearm", "source": "image", "visuallyConfirmed": True, "transcriptQuote": None}
+    assert c.post("/analyze", json=payload).json()["analysis"]["anatomicalRegion"]["value"] == "forearm"
+
+def test_failure_diagnostics_name_the_stage_without_content(client, payload, caplog):
+    c, model = client
+    model.last_diagnostics = {"finishReason": "stop", "promptTokens": 10, "completionTokens": 5}
+    model.result["characteristics"][0]["evidence"]["transcriptQuote"] = "private invented quote"
+    model.result["characteristics"][0]["description"] = "private description"
+    with caplog.at_level("WARNING", logger="medgemma.diagnostics"):
+        assert c.post("/analyze", json=payload).status_code == 502
+        model.result = "private raw failure data"
+        assert c.post("/analyze", json=payload).status_code == 502
+    text = caplog.text
+    assert "stage=output validation" in text and "Invalid quote" in text
+    assert "invalid JSON at character" in text and "completionTokens" in text
+    assert "private" not in text
+
 def test_request_and_media_validation_are_redacted(client, payload):
     c, _ = client
     payload["context"]["specialty"] = "PRIVATE-INVALID"

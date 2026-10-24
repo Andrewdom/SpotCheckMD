@@ -149,11 +149,51 @@ These are historical results before the owner paused testing, not a fresh certif
 | Real image-only request via TS adapter | Failed after approximately 207 seconds |
 | Real image + fictional transcript request | Failed after approximately 182 seconds |
 
-**No successful structured live MedGemma analysis has been demonstrated.** Both requests used a generated non-patient geometric diagram; they were technical checks, not clinical cases. The root cause is unresolved. Do not assert that a specific layer, model quality, JSON grammar, timeout, or evidence validator caused the failures without reproducing and isolating it. Subsequent small error-reporting changes have not received a complete test rerun.
+**No successful structured live MedGemma analysis has been demonstrated.** Both requests used a generated non-patient geometric diagram; they were technical checks, not clinical cases. The root cause is unresolved. Do not assert that a specific layer, model quality, JSON grammar, timeout, or evidence validator caused the failures without reproducing and isolating it. The later error-reporting and anatomy-validation changes have since been re-tested with mocks only (see the update below); they have not been run against real MedGemma.
 
 The model service/native child was stopped when testing paused. Do not assume any historical local server is still running. Credentials, model caches, converted weights, logs, and verification outputs were not pushed.
 
 Still unverified: real CUDA/Transformers inference, GPU memory/latency, Docker/hosted deployment, live OpenAI paths, phone capture, clinical-quality comparisons, and cost metrics. Mock success, conversion success, and HTTP health do not establish inference success or clinical suitability.
+
+## Update, October 23, 2026: suspected root cause, fix, and Mac verification
+
+**Status: a fix is implemented and mock-tested. It is NOT confirmed against real MedGemma.** The two real requests above have not been re-run since the fix. Do not describe the failure as resolved until the Mac run below succeeds.
+
+What was found (on a Windows i5 machine without MedGemma weights, using the locally installed `gemma3:4b` via Ollama as a stand-in; same architecture and Q4 quantization class, but not MedGemma):
+
+- The production prompt, production JSON schema and synthetic diagram were sent to the stand-in. Generation finished normally (`stop`, about 250 tokens, no token cap or timeout involved).
+- The production validator then rejected both outputs with `Invalid visual anatomy`. The model returned `anatomicalRegion: {value: "circle", source: "image", visuallyConfirmed: false}`, naming a shape as anatomy. The validator allowed `source: "image"` only with `visuallyConfirmed: true`, so the whole analysis was discarded for one inconsistent field. Originating rule: `validate_result` in `services/medgemma/service.py` and `validateImageAnalysis` in `lib/image-analysis/contracts.ts`.
+- llama.cpp's own schema-to-grammar converter (tag b6000, not the exact pinned commit) turns the schema into 75 rules and 7.5 KB, so grammar size is unlikely to be the problem.
+- Timing is consistent: about 45 s warm on that CPU, so a slower Intel Mac plausibly needs the observed 182 to 207 s for a complete, normal generation. This is circumstantial, not proof.
+
+Changes made (all additive to the safety rules, none loosened):
+
+1. **Anatomy fix.** An image-sourced region that the model did not mark visually confirmed (or with an empty value) is now downgraded to `source: "unknown"`, empty value, `visuallyConfirmed: false`, and the limitation "Model-proposed anatomical region was not visually confirmed and was discarded." is appended when fewer than 10 limitations exist. A confirmed image region is kept. All other anatomy and evidence rules are unchanged. Both validators are updated in sync; `PROMPT_VERSION` is unchanged because the prompt text did not change.
+2. **Private failure diagnostics.** On any `/analyze` failure the wrapper logs one warning on logger `medgemma.diagnostics` (visible in the terminal running Uvicorn): stage, elapsed seconds, output length, and a content-free reason (violated schema rule and field path, JSON error position, HTTP status, exception class, or this module's own fixed `ValueError` messages). The llama.cpp runtime records `finishReason`, `promptTokens` and `completionTokens`. No generated text, quotes or input are logged, and the HTTP response is still generic.
+3. **`.gitattributes`** (`contracts/* text eol=lf`) so the contract-drift test passes on Windows checkouts that use `core.autocrlf=true`.
+
+Tests after these changes: 29 of 29 Node tests, typecheck and production build pass. Python: 25 of 26 pass; the one failure (`test_owned_loopback_runtime_and_cleanup`) asserts Unix `0o600` file mode and fails only on Windows. Expect all to pass on macOS. Re-run them: `npm ci && npm test && npm run typecheck`, then `python -m pytest services/medgemma -q` in the test environment.
+
+### What the Mac teammate should do
+
+Only after the owner confirms the real live run is wanted (it is slow and uses the owner's model access). Use your own clone/worktree on `feature/medgemma-contextual-analysis`, at the commit containing this section.
+
+1. Run the mock checks above first, so a later failure is not a stale-install problem.
+2. Start the services exactly as in `docs/medgemma.md` ("Experimental Intel Mac / native CPU backend"): reuse the existing prepared manifest and pinned `llama-server` if present (do not re-download or re-convert), set `MEDGEMMA_BACKEND=llama_cpp`, `MEDGEMMA_GGUF_MANIFEST`, `MEDGEMMA_LLAMA_BINARY` and a fresh `MEDGEMMA_API_KEY`, and start Uvicorn in a terminal you can read (do not redirect it away; the diagnostics go there). Set `MEDGEMMA_TIMEOUT_MS=600000` for Next.js and use a fresh `AURA_DATA_DIR`.
+3. Run `node --env-file=.env.local --import tsx scripts/verify-local-medgemma.ts /private/NEW-dir --run-live` with a new output directory (it refuses an existing one). Do not overwrite earlier results.
+4. Interpret the result. Copy only the `medgemma.diagnostics` line(s), not any file contents or secrets:
+
+| Outcome | Meaning / next step |
+| --- | --- |
+| Both variants print `validated real response` | The anatomy fix addressed the failure. Inspect the written JSON for sanity, then record that real MedGemma analysis worked on synthetic input (still not clinical validation). |
+| `stage=output validation` with a different reason (for example `schema ... at /characteristics/0/...` or `Invalid quote`) | A different validator rule is rejecting the real output. The reason names the rule or field path; fix it narrowly, and never loosen evidence or review rules to force success. |
+| `stage=generation` with `finishReason: length` | The 3000-token cap was reached. Investigate output length and the schema's verbosity, not the validator. |
+| `stage=generation` with another error such as `HTTPStatusError HTTP 400/500` | A llama.cpp or request error. Test the grammar and image-size hypotheses using redacted diagnostics. |
+| No diagnostics line and a Next.js timeout/unreachable message | The wrapper or runtime did not respond in time; check the Uvicorn terminal for startup or process exit. |
+
+5. Report the diagnostics line, prompt/completion token counts, and wall-clock seconds back to the team. Do not paste credentials, `.env.local`, or raw request bodies.
+
+Even on success, the stand-in evidence above is not MedGemma evidence, quantized CPU output can differ from full-precision output, and the experimental runtime label and provenance must stay attached to results.
 
 ## Known limits and architectural direction
 

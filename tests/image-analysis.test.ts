@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { imageAnalysisSchema, transcriptWindows, validateImageAnalysis, type ImageRequest } from "../lib/image-analysis/contracts";
+import { imageAnalysisSchema, transcriptWindows, validateImageAnalysis, UNCONFIRMED_ANATOMY_NOTE, type ImageRequest } from "../lib/image-analysis/contracts";
 import { imageInstructions, imagePrompt } from "../lib/image-analysis/prompt";
 import { analyzeEncounter, type PipelineDeps } from "../lib/image-analysis/pipeline";
 import { medgemmaProvider, configuredImageProvider } from "../lib/image-analysis/providers";
@@ -82,6 +82,19 @@ for (const [name, mutate] of Object.entries({
   "transcript visually confirmed": (a: ReturnType<typeof analysis>) => { a.anatomicalRegion = { value: "left forearm", source: "transcript", transcriptQuote: "left forearm", visuallyConfirmed: true }; },
   "invalid conflict": (a: ReturnType<typeof analysis>) => { a.conflicts.push({ description: "Conflict", characteristicIds: ["missing"], transcriptSourceId: transcript.id, transcriptQuote: "no swelling" }); },
 })) test(`rejects ${name}`, () => { const a = analysis(); mutate(a); assert.throws(() => validateImageAnalysis(a, request())); });
+test("unconfirmed image-sourced anatomy is discarded with a limitation, confirmed anatomy is kept", () => {
+  for (const [value, confirmed] of [["circle", false], ["", true]] as const) {
+    const a = analysis(); a.anatomicalRegion = { value, source: "image", visuallyConfirmed: confirmed, transcriptQuote: null };
+    const result = validateImageAnalysis(a, request());
+    assert.deepEqual(result.anatomicalRegion, { value: "", source: "unknown", visuallyConfirmed: false, transcriptQuote: null });
+    assert.ok(result.limitations.includes(UNCONFIRMED_ANATOMY_NOTE));
+    assert.equal(result.characteristics.length, a.characteristics.length);
+  }
+  const kept = analysis(); kept.anatomicalRegion = { value: "forearm", source: "image", visuallyConfirmed: true, transcriptQuote: null };
+  assert.equal(validateImageAnalysis(kept, request()).anatomicalRegion.value, "forearm");
+  const full = analysis(); full.anatomicalRegion = { value: "circle", source: "image", visuallyConfirmed: false, transcriptQuote: null }; full.limitations = Array.from({ length: 10 }, (_, i) => `limit ${i}`);
+  assert.equal(validateImageAnalysis(full, request()).limitations.length, 10);
+});
 test("schema rejects malformed responses and unexpected diagnosis fields", () => {
   for (const value of [null, "text", {}, { ...analysis(), diagnosis: "unsupported" }, { ...analysis(), requiresPhysicianReview: false }]) assert.throws(() => validateImageAnalysis(value, request()));
 });

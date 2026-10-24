@@ -1,11 +1,28 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { specialties, type ClinicalContext } from "@/lib/image-analysis/contracts";
 import type { Encounter } from "@/lib/domain";
 
+type ContextEncounter = Pick<Encounter, "id" | "specialty" | "clinicalContext">;
+
+export function clinicalContextDraft(encounter: Pick<Encounter, "specialty" | "clinicalContext">): ClinicalContext {
+  return encounter.clinicalContext || { specialty: encounter.specialty, imageType: "clinical_photo", anatomicalLocation: "", physicianContext: "" };
+}
+
+// Identity of the saved context, not the encounter object. Refreshing consent or pairing
+// replaces that object without changing what was saved.
+export function clinicalContextSyncKey(encounter: ContextEncounter): string {
+  const draft = clinicalContextDraft(encounter);
+  return JSON.stringify([encounter.id, draft.specialty, draft.imageType, draft.anatomicalLocation, draft.physicianContext]);
+}
+
 export function ClinicalContextEditor({ encounter, disabled, onSave }: { encounter: Encounter; disabled: boolean; onSave: (context: ClinicalContext) => void }) {
-  const [value, setValue] = useState<ClinicalContext>(encounter.clinicalContext || { specialty: encounter.specialty, imageType: "clinical_photo", anatomicalLocation: "", physicianContext: "" });
-  useEffect(() => { setValue(encounter.clinicalContext || { specialty: encounter.specialty, imageType: "clinical_photo", anatomicalLocation: "", physicianContext: "" }); }, [encounter.id, encounter.specialty, encounter.clinicalContext]);
+  const draft = clinicalContextDraft(encounter);
+  const [value, setValue] = useState<ClinicalContext>(draft);
+  const syncKey = clinicalContextSyncKey(encounter);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  useEffect(() => { setValue(draftRef.current); }, [syncKey]);
   return <section className="rounded-2xl border border-slate-200 bg-white p-5">
     <h2 className="font-semibold">Clinical context for image analysis</h2>
     <p className="mt-2 text-xs text-slate-500">Context helps orient review. Spoken statements and location are not proof of visible findings. Supported input: authorized 2D JPEG/PNG images only.</p>

@@ -1,18 +1,21 @@
 import { randomBytes } from "node:crypto";
 import type { Encounter, Finding, Source, Conflict } from "../domain";
 import type { Suggested } from "../analysis";
+import { transcriptionKeyterms } from "../transcription/keyterms";
+import { locateTranscriptEvidence, type TranscriptArtifact, type TranscriptionProvider } from "../transcription/types";
 import { validateImageAnalysis, transcriptWindows, type ImageProvider, type ImageResult } from "./contracts";
 const uid = () => randomBytes(16).toString("hex");
 export type PipelineDeps = {
   ensureCurrent?: () => Promise<unknown>;
   provider: () => ImageProvider;
-  transcribe: (bytes: Buffer, mime: string) => Promise<string>;
+  transcriber: () => TranscriptionProvider;
   document: (transcript: { id: string; text: string }, specialty: string) => Promise<Suggested[]>;
   readMedia: (source: Source) => Promise<Buffer>;
 };
 export async function analyzeEncounter(snapshot: Encounter, runId: string, deps: PipelineDeps) {
   const warnings: string[] = [];
   const newSources: Source[] = [];
+  const newTranscripts: TranscriptArtifact[] = [];
   const findings: Finding[] = [];
   const conflicts: Conflict[] = [];
   const analyses: (ImageResult & { runId: string; provider: string })[] = [];
@@ -22,10 +25,13 @@ export async function analyzeEncounter(snapshot: Encounter, runId: string, deps:
   if (audio && !transcript) {
     await deps.ensureCurrent?.();
     try {
-      const text = await deps.transcribe(await deps.readMedia(audio), audio.mime || "audio/webm");
-      if (!text.trim()) throw new Error("Empty transcript");
-      transcript = { id: uid(), kind: "transcript", label: "Unverified transcript", text, mediaId: audio.mediaId, createdAt: new Date().toISOString() };
+      const bytes = await deps.readMedia(audio);
+      const transcriptSourceId = uid();
+      const artifact = await deps.transcriber().transcribe({ bytes, mime: audio.mime || "audio/webm", audioSourceId: audio.id, transcriptSourceId, keyterms: transcriptionKeyterms(snapshot) });
+      if (!artifact.text.trim() || artifact.transcriptSourceId !== transcriptSourceId || artifact.audioSourceId !== audio.id) throw new Error("Invalid transcript artifact");
+      transcript = { id: transcriptSourceId, kind: "transcript", label: "Unverified timestamped transcript", text: artifact.text, mediaId: audio.mediaId, transcriptArtifactId: artifact.id, createdAt: artifact.finalizedAt };
       newSources.push(transcript);
+      newTranscripts.push(artifact);
     } catch { warnings.push("Audio transcription failed. Images were processed without transcript context; no spoken findings were invented. Retry or document manually."); }
   }
   let windows: ReturnType<typeof transcriptWindows> = [];
@@ -40,7 +46,8 @@ export async function analyzeEncounter(snapshot: Encounter, runId: string, deps:
           // Validate again at the orchestration boundary, including injected adapters.
           if (!s.sourceIds.length || s.sourceIds.length !== s.evidenceQuotes.length || s.sourceIds.some(id => id !== window.id) || s.evidenceQuotes.some(q => !q.trim() || !window.text.includes(q))) throw new Error("Invalid documentation evidence");
           const limitation = [s.limitation, ["A", "P"].includes(s.section) ? "Spoken assessment/plan: verify clinician attribution; not an image-derived recommendation." : ""].filter(Boolean).join(" ");
-          findings.push({ id: uid(), section: s.section, text: s.text, originalText: s.text, origin: "spoken", certainty: ["A", "P"].includes(s.section) ? "uncertain" : s.certainty, limitation, evidence: s.sourceIds.map((sourceId, i) => ({ sourceId, quote: s.evidenceQuotes[i], role: "spoken" })), review: "pending", reviewNote: "", analysisRunId: runId, provider: "openai-transcript" });
+          const artifact = [...(snapshot.transcripts || []), ...newTranscripts].find(item => item.id === transcript?.transcriptArtifactId);
+          findings.push({ id: uid(), section: s.section, text: s.text, originalText: s.text, origin: "spoken", certainty: ["A", "P"].includes(s.section) ? "uncertain" : s.certainty, limitation, evidence: s.sourceIds.map((sourceId, i) => ({ sourceId, quote: s.evidenceQuotes[i], role: "spoken", transcript: locateTranscriptEvidence(artifact, s.evidenceQuotes[i]) })), review: "pending", reviewNote: "", analysisRunId: runId, provider: artifact ? `${artifact.provider}-transcript + openai-documentation` : "openai-documentation" });
         }
       } catch { warnings.push(`Transcript documentation failed for characters ${window.start}–${window.end}. The transcript remains available for manual review.`); }
     }
@@ -84,5 +91,5 @@ export async function analyzeEncounter(snapshot: Encounter, runId: string, deps:
   for (const visual of unique.values()) if (visual.origin === "visual") for (const spoken of unique.values()) if (spoken.origin === "spoken") {
     if ((/\bleft\b/i.test(visual.text) && /\bright\b/i.test(spoken.text)) || (/\bright\b/i.test(visual.text) && /\bleft\b/i.test(spoken.text))) conflicts.push({ id: uid(), findingIds: [visual.id, spoken.id], description: "Possible left/right discrepancy. Verify anatomy and attribution; different body sites may explain this warning.", resolution: "" });
   }
-  return { newSources, findings: [...unique.values()], conflicts, analyses, warnings: [...new Set(warnings)] };
+  return { newSources, newTranscripts, findings: [...unique.values()], conflicts, analyses, warnings: [...new Set(warnings)] };
 }

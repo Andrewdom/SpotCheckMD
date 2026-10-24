@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { assessImage, suggest, transcribe } from "@/lib/analysis";
+import { assessImage, suggest } from "@/lib/analysis";
 import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Source } from "@/lib/domain";
 import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, createSession, dataRoot, digest, mediaPath, respondError, transaction, uid } from "@/lib/store";
 
@@ -9,6 +9,8 @@ import { contextSchema, PROMPT_VERSION } from "@/lib/image-analysis/contracts";
 import { configuredImageProvider } from "@/lib/image-analysis/providers";
 import { analyzeEncounter } from "@/lib/image-analysis/pipeline";
 import { demoEhr, selectedChartContext } from "@/lib/ehr/adapter";
+import { configuredTranscriptionProvider, transcriptionModel } from "@/lib/transcription/providers";
+import { extractiveSubjectiveFindings, soapDocumentationMode } from "@/lib/transcription/soap";
 
 export const runtime = "nodejs";
 const safe = (e: Encounter) => ({ ...e, owner: undefined, sources: e.sources.map(({ mediaId, ...source }) => ({ ...source, mediaId: mediaId || undefined })) });
@@ -96,6 +98,24 @@ export async function POST(request: Request) {
         if (!f.text && f.review === "accepted") throw new AppError(400, "An accepted finding needs text.");
         for (const conflict of e.conflicts.filter(c => c.findingIds.includes(f.id))) conflict.resolution = "";
         changed(e, "finding reviewed");
+      } else if (action === "transcript-roles") {
+        const artifactId = required(body.artifactId, 64);
+        const patientSpeaker = required(body.patientSpeaker, 30);
+        const clinicianSpeaker = required(body.clinicianSpeaker, 30);
+        const artifact = e.transcripts?.find(item => item.id === artifactId);
+        const speakers = new Set(artifact?.utterances.map(utterance => utterance.speaker).filter(speaker => speaker !== "UNKNOWN") || []);
+        if (!artifact || !patientSpeaker || !clinicianSpeaker || patientSpeaker === clinicianSpeaker || !speakers.has(patientSpeaker) || !speakers.has(clinicianSpeaker)) throw new AppError(400, "Choose distinct patient and clinician speakers from this transcript.");
+        e.transcriptRoles = { artifactId, patientSpeaker, clinicianSpeaker, confirmedAt: new Date().toISOString() };
+        if (soapDocumentationMode() === "extractive") replaceExtractiveFindings(e, artifact, patientSpeaker, e.transcriptRoles);
+        changed(e, "transcript speaker roles confirmed");
+      } else if (action === "transcript-extractive") {
+        if (soapDocumentationMode() !== "extractive") throw new AppError(409, "Local extractive SOAP mode is not selected.");
+        const artifactId = required(body.artifactId, 64);
+        const patientSpeaker = required(body.patientSpeaker, 30);
+        const artifact = e.transcripts?.find(item => item.id === artifactId);
+        if (!artifact) throw new AppError(404, "Transcript artifact not found.");
+        replaceExtractiveFindings(e, artifact, patientSpeaker);
+        changed(e, "local extractive Subjective findings created");
       } else if (action === "manual") {
         const source = e.sources.find(v => v.id === body.sourceId);
         const wording = required(body.text, 500).trim();
@@ -187,8 +207,8 @@ async function analyze(request: Request) {
   });
   try {
     const result = await analyzeEncounter(snapshot, runId, {
-      provider: configuredImageProvider, transcribe,
-      document: (transcript, specialty) => suggest([], transcript, specialty),
+      provider: configuredImageProvider, transcriber: configuredTranscriptionProvider,
+      document: soapDocumentationMode() === "extractive" ? async () => [] : (transcript, specialty) => suggest([], transcript, specialty),
       readMedia: source => readFile(mediaPath(source.mediaId!)), ensureCurrent,
     });
     await ensureCurrent();
@@ -198,6 +218,7 @@ async function analyze(request: Request) {
       checkRevision(e, snapshot.revision);
       if (e.activeAnalysis?.id !== runId || !e.consent || !e.patientConfirmed) throw new AppError(409, "Analysis superseded.");
       e.sources.push(...result.newSources);
+      e.transcripts = [...(e.transcripts || []), ...result.newTranscripts];
       // Preserve clinician edits and prior decisions when retrying; replace only pending AI proposals.
       const retained = e.findings.filter(f => f.origin === "clinician" || f.review !== "pending");
       const retainedIds = new Set(retained.map(f => f.id));
@@ -206,9 +227,15 @@ async function analyze(request: Request) {
       e.imageAnalyses = [...(e.imageAnalyses || []), ...result.analyses];
       e.analysisWarnings = result.warnings; e.warningsAcknowledged = false;
       e.analysis = result.findings.length || result.analyses.length ? "ready" : "failed";
-      e.analysisError = e.analysis === "failed" ? "No new findings were generated. Review analysis warnings or add a supported manual observation." : "";
+      const hasTranscript = e.sources.some(source => source.kind === "transcript");
+      const transcriptionFailed = result.warnings.some(warning => warning.startsWith("Audio transcription failed."));
+      e.analysisError = e.analysis !== "failed" ? ""
+        : hasTranscript && soapDocumentationMode() === "extractive" ? "The finalized transcript is available. Confirm the patient and clinician speakers to create free local extractive Subjective findings."
+          : hasTranscript ? "The finalized transcript is available, but SOAP suggestions were not generated. Check the OpenAI SOAP-extraction configuration or add a clinician observation."
+          : transcriptionFailed ? "The audio was saved, but transcription failed. Check the selected transcription provider and its server-side API key, then retry."
+            : "No new findings were generated. Review analysis warnings or add a supported manual observation.";
       e.activeAnalysis = undefined;
-      e.model = [...new Set([...result.analyses.map(a => a.model), ...(result.findings.some(f => f.origin === "spoken") ? ["gpt-4o (transcript)"] : [])])].join(" + ");
+      e.model = [...new Set([...result.analyses.map(a => a.model), ...(e.transcripts || []).map(transcriptionModel), ...(result.findings.some(f => f.origin === "spoken") ? ["gpt-4o (transcript documentation)"] : [])].filter(Boolean))].join(" + ");
       e.promptVersion = PROMPT_VERSION;
       changed(e, "analysis completed"); return safe(e);
     });
@@ -224,4 +251,16 @@ async function analyze(request: Request) {
     });
     return respondError(error);
   }
+}
+
+function replaceExtractiveFindings(encounter: Encounter, artifact: NonNullable<Encounter["transcripts"]>[number], patientSpeaker: string, roles?: NonNullable<Encounter["transcriptRoles"]>) {
+  const replacedIds = new Set(encounter.findings.filter(finding => finding.review === "pending" && finding.provider === "local-extractive-transcript" && finding.evidence.some(evidence => evidence.transcript?.artifactId === artifact.id)).map(finding => finding.id));
+  encounter.findings = encounter.findings.filter(finding => !replacedIds.has(finding.id));
+  encounter.conflicts = encounter.conflicts.filter(conflict => conflict.findingIds.every(id => !replacedIds.has(id)));
+  const generated = extractiveSubjectiveFindings(artifact, patientSpeaker, roles);
+  if (!generated.length) throw new AppError(400, "The selected speaker has no extractable transcript statements.");
+  encounter.findings.push(...generated);
+  encounter.analysis = "ready";
+  encounter.analysisError = "";
+  encounter.model = [...new Set([encounter.model, "local:extractive-soap-v1"].filter(Boolean))].join(" + ");
 }

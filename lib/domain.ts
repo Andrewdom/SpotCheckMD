@@ -1,12 +1,14 @@
 import type { ClinicalContext, ImageResult } from "./image-analysis/contracts";
 import { formatChartContext, type ChartContext, type EhrReceipt } from "./ehr/types";
+import type { TranscriptArtifact, TranscriptEvidence, TranscriptRoles } from "./transcription/types";
 export type Specialty = ClinicalContext["specialty"];
 export type Section = "S" | "O" | "A" | "P";
-export type Evidence = { sourceId: string; quote: string; role?: "visual" | "context" | "spoken" | "clinician" };
+export type Evidence = { sourceId: string; quote: string; role?: "visual" | "context" | "spoken" | "clinician"; transcript?: TranscriptEvidence };
 export type Quality = { status: "usable" | "limited" | "retake"; reasons: string[]; guidance: string[] };
 export type Source = {
   id: string; kind: "image" | "audio" | "transcript" | "clinician";
   label: string; text?: string; mediaId?: string; start?: number; end?: number;
+  transcriptArtifactId?: string;
   mime?: string;
   quality?: Quality; width?: number; height?: number; createdAt: string;
 };
@@ -31,6 +33,8 @@ export type Encounter = {
   activeAnalysis?: { id: string; expiresAt: number };
   chartContext?: ChartContext;
   ehrReceipts?: EhrReceipt[];
+  transcripts?: TranscriptArtifact[];
+  transcriptRoles?: TranscriptRoles;
   approval: null | { revision: number; physician: string; at: string; note: string; digest: string };
   export: null | { id: string; at: string; revision: number; mode: "simulation" };
   audit: { at: string; action: string; revision: number }[];
@@ -40,6 +44,10 @@ export const PATIENTS = [
   { id: "demo-002", name: "Jordan Lee", initials: "JL", age: 27, record: "DEMO-002", detail: "Throat observation", specialty: "throat" as Specialty },
 ];
 export const sectionLabels: Record<Section, string> = { S: "Subjective", O: "Objective", A: "Assessment", P: "Plan" };
+const transcriptTimestamp = (milliseconds: number) => {
+  const total = Math.max(0, Math.floor(milliseconds / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+};
 
 export function reviewBlockers(e: Encounter): string[] {
   const errors: string[] = [];
@@ -52,6 +60,12 @@ export function reviewBlockers(e: Encounter): string[] {
   if (e.findings.some(f => f.review === "pending")) errors.push("Review every proposed finding.");
   if (e.conflicts.some(c => !c.resolution.trim())) errors.push("Resolve each conflict with a written explanation.");
   const ids = new Set(e.sources.map(s => s.id));
+  const acceptedSpoken = e.findings.filter(f => f.review === "accepted" && f.origin === "spoken");
+  const labeledArtifacts = (e.transcripts || []).filter(artifact => artifact.settings.speakerLabels && new Set(artifact.utterances.map(utterance => utterance.speaker).filter(speaker => speaker !== "UNKNOWN")).size > 1);
+  if (acceptedSpoken.some(f => f.evidence.some(v => labeledArtifacts.some(artifact => artifact.id === v.transcript?.artifactId))) &&
+      (!e.transcriptRoles || e.transcriptRoles.patientSpeaker === e.transcriptRoles.clinicianSpeaker || !labeledArtifacts.some(artifact => artifact.id === e.transcriptRoles?.artifactId))) {
+    errors.push("Confirm which transcript speaker is the patient and which is the clinician.");
+  }
   for (const f of e.findings.filter(f => f.review === "accepted")) {
     if (!f.evidence.length || f.evidence.some(v => !ids.has(v.sourceId) || !v.quote.trim() || (e.sources.find(s => s.id === v.sourceId)?.kind === "transcript" && !e.sources.find(s => s.id === v.sourceId)?.text?.includes(v.quote)))) errors.push("A finding has missing source evidence.");
     if (f.certainty !== "observed" && !f.reviewNote.trim()) errors.push("Explain how uncertain or unassessable findings were handled.");
@@ -65,7 +79,16 @@ export function reviewBlockers(e: Encounter): string[] {
 export function composeNote(e: Encounter, approvedOnly = true): string {
   const soap = (["S", "O", "A", "P"] as Section[]).map(section => {
     const findings = e.findings.filter(f => f.section === section && (approvedOnly ? f.review === "accepted" : f.review !== "rejected"));
-    const lines = findings.map(f => `${!approvedOnly && f.review === "pending" ? "[PENDING REVIEW] " : ""}${f.certainty === "observed" ? "" : `[${f.certainty.replaceAll("_", " ")}] `}${f.text}${f.limitation ? ` (Limitation: ${f.limitation})` : ""} [${f.evidence.map(v => v.sourceId).join(", ")}]${f.reviewNote ? `\nReviewer: ${f.reviewNote}` : ""}`);
+    const lines = findings.map(f => {
+      const evidence = f.evidence.map(v => {
+        if (!v.transcript) return v.sourceId;
+        const mappedRole = e.transcriptRoles?.artifactId === v.transcript.artifactId
+          ? v.transcript.speaker === e.transcriptRoles.patientSpeaker ? "patient" : v.transcript.speaker === e.transcriptRoles.clinicianSpeaker ? "clinician" : "unmapped speaker"
+          : `unconfirmed ${v.transcript.speaker}`;
+        return `${v.sourceId}; ${mappedRole}; ${transcriptTimestamp(v.transcript.startMs)}–${transcriptTimestamp(v.transcript.endMs)}`;
+      }).join(", ");
+      return `${!approvedOnly && f.review === "pending" ? "[PENDING REVIEW] " : ""}${f.certainty === "observed" ? "" : `[${f.certainty.replaceAll("_", " ")}] `}${f.text}${f.limitation ? ` (Limitation: ${f.limitation})` : ""} [${evidence}]${f.reviewNote ? `\nReviewer: ${f.reviewNote}` : ""}`;
+    });
     return `${sectionLabels[section].toUpperCase()}\n${lines.join("\n") || "Not documented."}`;
   }).join("\n\n");
   return [formatChartContext(e.chartContext), soap].filter(Boolean).join("\n\n");

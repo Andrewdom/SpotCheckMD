@@ -181,7 +181,7 @@ test("EHR: selected history stays outside MedGemma inputs and runtime provenance
       assert.equal(input.transcript, null); assert.ok(!JSON.stringify(input).includes("CHART_CONTEXT_SENTINEL"));
       return { analysis: analysis(input), model: "google/medgemma-1.5-4b-it", modelRevision: "mock-revision", latencyMs: 1, contextRange: null, runtime };
     } }),
-    transcribe: async () => { throw new Error("Unexpected transcription"); },
+    transcriber: () => { throw new Error("Unexpected transcription"); },
     document: async () => { throw new Error("Unexpected documentation"); }, readMedia: async () => Buffer.from("synthetic"),
   });
   await store.transaction(db => {

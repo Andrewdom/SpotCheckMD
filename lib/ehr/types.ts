@@ -26,7 +26,12 @@ export type ChartNote = {
   approvedAt: string; savedAt: string; physician: string;
   text: string; digest: string; revision: number; amendsId?: string;
   chartContext?: ChartContext;
-  provenance?: { model: string; promptVersion: string; imageRuns: { runId: string; provider: string; model: string; modelRevision: string; runtime?: ImageResult["runtime"] }[] };
+  provenance?: {
+    model: string; promptVersion: string;
+    imageRuns: { runId: string; provider: string; model: string; modelRevision: string; runtime?: ImageResult["runtime"] }[];
+    transcripts?: { id: string; digest: string; audioSha256: string; provider: string; model: string; medicalMode: boolean; speakerLabels: boolean }[];
+    transcriptRoles?: { artifactId: string; patientSpeaker: string; clinicianSpeaker: string; confirmedAt: string };
+  };
 };
 export type StoredChart = { owner: string; patientId: string; version: number; notes: ChartNote[] };
 export type PatientChart = {

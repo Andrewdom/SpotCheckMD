@@ -9,6 +9,7 @@ import { ClinicalContextEditor, ImageAnalysisContext } from "@/components/clinic
 import { PatientChartPanel } from "@/components/patient-chart";
 import { EhrSubmission } from "@/components/ehr-submission";
 import { formatChartContext } from "@/lib/ehr/types";
+import { downsampleToPCM16 } from "@/lib/transcription/pcm";
 
 type Stage = "patients" | "chart" | "capture" | "review";
 const card = "rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/40";
@@ -32,12 +33,21 @@ export default function Dashboard() {
   const [zoom, setZoom] = useState(1);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [liveCaption, setLiveCaption] = useState("");
+  const [liveCaptionState, setLiveCaptionState] = useState<"off" | "connecting" | "live" | "unavailable">("off");
   const [clinician, setClinician] = useState("");
   const [chartPatientId, setChartPatientId] = useState("");
   const [chartDirty, setChartDirty] = useState(false);
   const [focusNoteId, setFocusNoteId] = useState<string>();
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  const liveSocket = useRef<WebSocket | null>(null);
+  const liveAudioContext = useRef<AudioContext | null>(null);
+  const liveProcessor = useRef<ScriptProcessorNode | null>(null);
+  const liveSource = useRef<MediaStreamAudioSourceNode | null>(null);
+  const liveGain = useRef<GainNode | null>(null);
+  const liveTurns = useRef(new Map<string, string>());
+  const liveSession = useRef(0);
   const active = useRef<Encounter | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -101,9 +111,66 @@ export default function Dashboard() {
   }, [recording]);
   useEffect(() => () => {
     recorder.current?.stop();
+    stopLiveTranscription(false);
     stream.current?.getTracks().forEach(track => track.stop());
     cameraStream.current?.getTracks().forEach(track => track.stop());
   }, []);
+
+  function stopLiveTranscription(terminate = true) {
+    liveSession.current++;
+    const socket = liveSocket.current;
+    if (terminate && socket?.readyState === WebSocket.OPEN) {
+      try { socket.send(JSON.stringify({ type: "Terminate" })); } catch { /* socket already closing */ }
+    }
+    socket?.close(); liveSocket.current = null;
+    liveProcessor.current?.disconnect(); liveProcessor.current = null;
+    liveSource.current?.disconnect(); liveSource.current = null;
+    liveGain.current?.disconnect(); liveGain.current = null;
+    void liveAudioContext.current?.close(); liveAudioContext.current = null;
+    setLiveCaptionState("off");
+  }
+
+  async function startLiveTranscription(media: MediaStream) {
+    if (!active.current) return;
+    const sessionId = ++liveSession.current;
+    liveTurns.current.clear(); setLiveCaption(""); setLiveCaptionState("connecting");
+    try {
+      const response = await fetch("/api/transcription-token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ encounterId: active.current.id, revision: active.current.revision }), cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Live captions unavailable.");
+      if (sessionId !== liveSession.current) return;
+      const socket = new WebSocket(result.url);
+      socket.binaryType = "arraybuffer"; liveSocket.current = socket;
+      socket.onmessage = event => {
+        try {
+          const data = JSON.parse(String(event.data));
+          if (data.type !== "Turn" || typeof data.transcript !== "string" || !data.transcript.trim()) return;
+          const speaker = typeof data.speaker_label === "string" ? data.speaker_label : Array.isArray(data.words) && typeof data.words[0]?.speaker === "string" ? data.words[0].speaker : "Speaker";
+          liveTurns.current.set(String(data.turn_order ?? liveTurns.current.size), `${speaker}: ${data.transcript}${data.end_of_turn ? "" : " …"}`);
+          setLiveCaption([...liveTurns.current.values()].join("\n"));
+        } catch { /* ignore non-transcript provider events */ }
+      };
+      socket.onopen = () => {
+        if (sessionId !== liveSession.current) { socket.close(); return; }
+        const context = new AudioContext();
+        const source = context.createMediaStreamSource(media);
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        const gain = context.createGain(); gain.gain.value = 0;
+        processor.onaudioprocess = event => {
+          if (socket.readyState !== WebSocket.OPEN) return;
+          try { socket.send(downsampleToPCM16(event.inputBuffer.getChannelData(0), context.sampleRate)); }
+          catch { setLiveCaptionState("unavailable"); }
+        };
+        source.connect(processor); processor.connect(gain); gain.connect(context.destination);
+        liveAudioContext.current = context; liveSource.current = source; liveProcessor.current = processor; liveGain.current = gain;
+        setLiveCaptionState("live");
+      };
+      socket.onerror = () => { if (sessionId === liveSession.current) setLiveCaptionState("unavailable"); };
+      socket.onclose = () => { if (sessionId === liveSession.current && recording) setLiveCaptionState("unavailable"); };
+    } catch {
+      if (sessionId === liveSession.current) setLiveCaptionState("unavailable");
+    }
+  }
 
   async function act(action: string, payload: Record<string, unknown> = {}, after?: Stage) {
     if (!active.current) return false;
@@ -209,9 +276,10 @@ export default function Dashboard() {
         if (chunks.length) void upload(new File(chunks, mime.includes("mp4") ? "encounter.mp4" : "encounter.webm", { type: mime || rec.mimeType }), "audio");
       };
       recorder.current = rec; setSeconds(0); rec.start(); setRecording(true);
+      void startLiveTranscription(media);
     } catch { setMessage("Microphone permission was declined or unavailable."); }
   }
-  function stopRecording() { recorder.current?.stop(); }
+  function stopRecording() { stopLiveTranscription(); recorder.current?.stop(); }
   async function copyNote() { try { await navigator.clipboard.writeText(note); setMessage("Draft copied with source IDs."); } catch { setMessage("Clipboard unavailable. Select the note text to copy it."); } }
 
   return <div className="min-h-screen bg-[#f3f7f7] text-slate-800 selection:bg-teal-100">
@@ -231,7 +299,7 @@ export default function Dashboard() {
         <div className={`${card} mb-6 flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5`}><div className="flex items-center gap-3"><span className="flex size-11 items-center justify-center rounded-xl bg-teal-100 font-bold text-teal-800">{patient?.initials}</span><div><p className="text-sm font-semibold">{patient?.name} <span className="ml-1 rounded bg-amber-50 px-1.5 py-1 text-[9px] uppercase text-amber-800">Fictional</span></p><p className="text-xs text-slate-500">{patient?.record} · {patient?.detail} · Encounter {current.id.slice(0, 8)}</p></div></div><div className="flex gap-2 text-xs font-semibold"><button disabled={busy || recording} onClick={() => { setFocusNoteId(undefined); setStage("chart"); }} className={`rounded-lg px-3 py-2 ${stage === "chart" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>Chart</button><button disabled={busy || recording} onClick={() => setStage("capture")} className={`rounded-lg px-3 py-2 ${stage === "capture" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>1 · Capture</button><button disabled={busy || recording} onClick={() => setStage("review")} className={`rounded-lg px-3 py-2 ${stage === "review" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>2 · Review</button></div></div>
         {stage === "capture" && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
           <div className="space-y-6"><ClinicalContextEditor encounter={current} disabled={busy || recording} onSave={context => void act("context", { context })} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Confirm before capture</h2><p className="mt-2 text-xs leading-5 text-slate-500">In a real deployment, QR pairing would require clinician authentication and an independently verified patient identity. This local demo uses fictional records only.</p><div className="mt-5 space-y-3"><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.patientConfirmed} onChange={e => void act("confirm", { confirmed: e.target.checked, consent: current.consent })} className="size-4 accent-teal-700" /> Patient and encounter confirmed</label><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.consent} onChange={e => void act("confirm", { confirmed: current.patientConfirmed, consent: e.target.checked })} className="size-4 accent-teal-700" /> All participants consented to recording and processing</label></div><button disabled={busy} onClick={() => void act("pair")} className={`${button} mt-5 border border-teal-200 bg-teal-50 text-teal-800`}><Link2 size={15} /> Create one-use QR link</button>{pairUrl && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs text-slate-600">Scan this QR on a phone within 5 minutes. Anyone holding it can open this fictional encounter.</p>{qr && <img src={qr} alt="One-use pairing QR code" className="my-3 h-48 w-48 rounded bg-white" />}<a className="break-all text-xs text-teal-700 underline" href={pairUrl}>{pairUrl}</a></div>}</section>
-          <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><Mic size={19} className="text-teal-700" /> Encounter audio</h2><div className="my-5 flex h-16 items-center justify-center gap-1 rounded-xl bg-teal-50" aria-hidden="true">{Array.from({ length: 33 }, (_, i) => <span key={i} className={`w-1.5 rounded-full bg-teal-500 ${recording ? "audio-bar-active" : ""}`} style={{ height: `${10 + (i * 13 + i * i * 3) % 42}px`, animationDelay: `${i * -42}ms` }} />)}</div><p className="mb-4 text-xs text-slate-500">{recording ? `Recording ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "Audio is captured only after you start recording."}</p><button disabled={busy || !current.consent || !current.patientConfirmed} onClick={() => recording ? stopRecording() : void startRecording()} className={`${button} w-full bg-teal-800 text-white hover:bg-teal-700`}>{recording ? <Square size={16} /> : <Mic size={16} />}{recording ? "Stop and save recording" : "Start recording"}</button><p className="mt-3 text-[11px] leading-5 text-slate-500">Use short fictional dialogue. Speaker identity and patient statements must be checked during review.</p></section></div>
+          <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><Mic size={19} className="text-teal-700" /> Encounter audio</h2><div className="my-5 flex h-16 items-center justify-center gap-1 rounded-xl bg-teal-50" aria-hidden="true">{Array.from({ length: 33 }, (_, i) => <span key={i} className={`w-1.5 rounded-full bg-teal-500 ${recording ? "audio-bar-active" : ""}`} style={{ height: `${10 + (i * 13 + i * i * 3) % 42}px`, animationDelay: `${i * -42}ms` }} />)}</div><p className="mb-4 text-xs text-slate-500">{recording ? `Recording ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "Audio is captured only after you start recording."}</p><button disabled={busy || !current.consent || !current.patientConfirmed} onClick={() => recording ? stopRecording() : void startRecording()} className={`${button} w-full bg-teal-800 text-white hover:bg-teal-700`}>{recording ? <Square size={16} /> : <Mic size={16} />}{recording ? "Stop and save recording" : "Start recording"}</button>{recording && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-teal-800">{liveCaptionState === "live" ? "Live provisional transcript" : liveCaptionState === "connecting" ? "Connecting live captions" : liveCaptionState === "unavailable" ? "Live captions unavailable; recording continues" : "Recording"}</p><p className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-600">{liveCaption || "Waiting for speech…"}</p><p className="mt-2 text-[10px] text-slate-500">Provisional captions are never used as note evidence. The completed recording is transcribed again after the visit.</p></div>}<p className="mt-3 text-[11px] leading-5 text-slate-500">Use short fictional dialogue. Speaker identity and patient statements must be checked during review.</p></section></div>
           <section className={card + " p-5 sm:p-6"}>
             <h2 className="flex items-center gap-2 text-base font-semibold">
               <Camera size={19} className="text-teal-700" />
@@ -367,6 +435,7 @@ export default function Dashboard() {
           <div className="lg:col-span-2"><div className={`${card} flex flex-wrap items-center justify-between gap-4 p-5`}><div><p className="font-semibold">Ready to propose findings?</p><p className="mt-1 text-xs text-slate-500">AI suggestions stay pending until a clinician reviews each one. Retake warnings remain visible.</p></div><button disabled={busy || recording || !current.consent || !current.patientConfirmed || !current.sources.some(s => s.kind === "image" || s.kind === "audio")} onClick={() => void act("analyze", {}, "review")} className={`${button} bg-teal-800 text-white`}>{busy ? <LoaderCircle className="animate-spin" size={16} /> : <Sparkles size={16} />} {busy ? "Processing…" : "Analyze & review"}</button></div></div>
         </div>}
         {stage === "review" && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)]"><div className="space-y-6">
+          <TranscriptReview encounter={current} disabled={busy} onConfirm={(artifactId, patientSpeaker, clinicianSpeaker) => void act("transcript-roles", { artifactId, patientSpeaker, clinicianSpeaker })} onExtract={(artifactId, patientSpeaker) => void act("transcript-extractive", { artifactId, patientSpeaker })} />
           <ImageAnalysisContext encounter={current} disabled={busy} onAcknowledge={() => void act("acknowledge-warnings")} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Evidence-backed findings</h2><p className="mt-2 text-xs text-slate-500">Open the cited source for each claim. Accept, edit, or reject every suggestion.</p>{current.analysis === "failed" && <p className="mt-4 text-sm text-red-700">{current.analysisError}</p>}{!current.findings.length && <p className="mt-5 rounded-xl bg-slate-50 p-6 text-sm text-slate-500">No suggestions yet. Return to capture and run analysis.</p>}<div className="mt-5 space-y-4">{current.findings.map(f => <FindingCard key={f.id} finding={f} sources={current.sources} disabled={busy} onSave={(review, text, reviewNote) => void act("review", { findingId: f.id, review, text, reviewNote })} />)}</div></section>
           <ManualFinding sources={current.sources} disabled={busy} onSave={(section, sourceId, text, evidenceQuote) => void act("manual", { section, sourceId, text, evidenceQuote })} />
           <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><TriangleAlert size={18} className="text-amber-600" /> Uncertainty and conflicts</h2>{current.conflicts.length ? current.conflicts.map(c => <div key={c.id} className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm text-amber-900">{c.description}</p><label className="mt-3 block text-xs font-semibold">Clinician resolution<textarea defaultValue={c.resolution} onBlur={e => { if (e.target.value !== c.resolution) void act("resolve", { conflictId: c.id, resolution: e.target.value }); }} className="mt-2 w-full rounded-lg border border-amber-200 p-2 text-sm" rows={2} /></label></div>) : <p className="mt-3 text-xs text-slate-500">No automated left/right discrepancy flagged. Absence of a flag does not rule out other contradictions.</p>}<p className="mt-4 text-xs text-slate-500">Uncertain or limited-image findings require a reviewer note before approval. Image quality is never a diagnosis.</p></section>
@@ -379,11 +448,30 @@ export default function Dashboard() {
   </div>;
 }
 
+function displayTimestamp(milliseconds: number) {
+  const total = Math.max(0, Math.floor(milliseconds / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function TranscriptReview({ encounter, disabled, onConfirm, onExtract }: { encounter: Encounter; disabled: boolean; onConfirm: (artifactId: string, patientSpeaker: string, clinicianSpeaker: string) => void; onExtract: (artifactId: string, patientSpeaker: string) => void }) {
+  const artifact = encounter.transcripts?.at(-1);
+  const speakers = artifact ? [...new Set(artifact.utterances.map(utterance => utterance.speaker).filter(speaker => speaker !== "UNKNOWN"))] : [];
+  const [patientSpeaker, setPatientSpeaker] = useState("");
+  const [clinicianSpeaker, setClinicianSpeaker] = useState("");
+  useEffect(() => {
+    const roles = encounter.transcriptRoles?.artifactId === artifact?.id ? encounter.transcriptRoles : undefined;
+    setPatientSpeaker(roles?.patientSpeaker || speakers[0] || "");
+    setClinicianSpeaker(roles?.clinicianSpeaker || speakers.find(speaker => speaker !== (roles?.patientSpeaker || speakers[0])) || "");
+  }, [artifact?.id, encounter.transcriptRoles?.confirmedAt]);
+  if (!artifact) return null;
+  return <section className={`${card} p-5 sm:p-6`}><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-base font-semibold">Finalized encounter transcript</h2><p className="mt-1 text-xs text-slate-500">{artifact.provider} · {artifact.model} · immutable digest {artifact.digest.slice(0, 12)}</p></div><span className="rounded bg-teal-50 px-2 py-1 text-[10px] font-bold uppercase text-teal-800">{artifact.settings.medicalMode ? "Medical Mode" : "General transcription"}</span></div><p className="mt-3 text-xs leading-5 text-slate-500">This finalized post-visit transcript is the evidence source. Live captions were provisional and were not saved into the note.</p>{artifact.settings.keyterms.length > 0 && <p className="mt-2 text-xs text-slate-500">Key terms: {artifact.settings.keyterms.join(", ")}</p>}<div className="mt-4 max-h-80 space-y-2 overflow-auto rounded-xl bg-slate-50 p-3">{artifact.utterances.map(utterance => <div key={utterance.id} className="rounded-lg bg-white p-3 text-xs leading-5"><p className="font-bold text-teal-800">{utterance.speaker} · {displayTimestamp(utterance.startMs)}–{displayTimestamp(utterance.endMs)}</p><p className="mt-1 text-slate-700">{utterance.text}</p>{utterance.words.length > 0 && <p className="mt-1 text-[10px] text-slate-400">{utterance.words.length} timestamped words</p>}</div>)}</div>{speakers.length > 1 ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="text-xs font-semibold text-amber-900">Confirm the roles after listening to the recording. Diarization labels are not identities. In free local mode, the confirmed patient turns become pending Subjective findings.</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold">Patient speaker<select value={patientSpeaker} onChange={event => setPatientSpeaker(event.target.value)} className="mt-2 w-full rounded-lg border border-amber-200 bg-white p-2.5 text-sm">{speakers.map(speaker => <option key={speaker}>{speaker}</option>)}</select></label><label className="text-xs font-semibold">Clinician speaker<select value={clinicianSpeaker} onChange={event => setClinicianSpeaker(event.target.value)} className="mt-2 w-full rounded-lg border border-amber-200 bg-white p-2.5 text-sm">{speakers.map(speaker => <option key={speaker}>{speaker}</option>)}</select></label></div><button type="button" disabled={disabled || !patientSpeaker || !clinicianSpeaker || patientSpeaker === clinicianSpeaker} onClick={() => onConfirm(artifact.id, patientSpeaker, clinicianSpeaker)} className={`${button} mt-3 bg-teal-800 text-white`}>{encounter.transcriptRoles?.artifactId === artifact.id ? "Update speaker roles" : "Confirm speaker roles"}</button></div> : <div className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-900"><p>Two distinct speakers were not reliably identified. You can create exact extractive Subjective findings from this voice, but attribution remains unconfirmed until clinician review.</p><button type="button" disabled={disabled || !speakers[0]} onClick={() => onExtract(artifact.id, speakers[0])} className={`${button} mt-3 border border-amber-300 bg-white`}>Create local extractive findings</button></div>}</section>;
+}
+
 function FindingCard({ finding: f, sources, disabled, onSave }: { finding: Finding; sources: Encounter["sources"]; disabled: boolean; onSave: (review: Finding["review"], text: string, note: string) => void }) {
   const [text, setText] = useState(f.text);
   const [note, setNote] = useState(f.reviewNote);
   useEffect(() => { setText(f.text); setNote(f.reviewNote); }, [f.id, f.text, f.reviewNote]);
-  return <article className="rounded-xl border border-slate-200 p-4"><div className="flex flex-wrap gap-2"><span className="rounded bg-teal-50 px-2 py-1 text-[10px] font-bold uppercase text-teal-800">{sectionLabels[f.section]} · {f.origin}</span><span className={`rounded px-2 py-1 text-[10px] font-semibold uppercase ${f.certainty === "observed" ? "bg-slate-100 text-slate-600" : "bg-amber-50 text-amber-800"}`}>{f.certainty.replaceAll("_", " ")}</span><span className="rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-600">{f.review}</span></div><label className="mt-3 block text-xs font-semibold text-slate-600">Proposed wording<textarea value={text} onChange={e => setText(e.target.value)} maxLength={500} rows={2} className="mt-2 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6" /></label>{f.limitation && <p className="mt-2 text-xs text-amber-800">Limit: {f.limitation}</p>}<p className="mt-2 text-xs text-slate-500">{f.category ? `${f.category} · ` : ""}{f.origin === "visual" ? "Candidate visual observation; any transcript citation provides context only." : f.origin === "spoken" ? "Reported in conversation; not independently visually verified." : "Clinician supplied"}{f.provider ? ` · ${f.provider}` : ""}</p><p className="mt-3 text-xs font-bold text-slate-600">Evidence</p><div className="mt-1 space-y-1">{f.evidence.map((ev, i) => <p key={i} className="text-xs leading-5 text-slate-500"><a className="font-semibold text-teal-700 underline" href={`#source-${ev.sourceId}`}>{sources.find(s => s.id === ev.sourceId)?.label || "Missing source"} [{ev.sourceId.slice(0, 8)}]</a> — {ev.role === "context" ? "Transcript context (not visual proof): " : ""}{ev.quote}</p>)}</div>{sources.filter(s => s.kind === "image" && f.evidence.some(e => e.sourceId === s.id)).map(s => <a key={s.id} href={`#source-${s.id}`}><img src={`/api/media/${s.mediaId}`} alt={`Evidence: ${s.label}`} className="mt-3 h-28 rounded object-contain" /></a>)}<label className="mt-3 block text-xs font-semibold text-slate-600">Reviewer note for edits or uncertainty<input value={note} onChange={e => setNote(e.target.value)} maxLength={500} placeholder="Explain corrections or limitations" className="mt-2 w-full rounded-lg border border-slate-200 p-2.5 text-sm" /></label><div className="mt-3 flex gap-2"><button disabled={disabled || !text.trim()} onClick={() => onSave("accepted", text, note)} className={`${button} bg-teal-800 text-white`}>Accept</button><button disabled={disabled} onClick={() => onSave("rejected", text, note)} className={`${button} border border-slate-200 text-slate-600`}>Reject</button></div></article>;
+  return <article className="rounded-xl border border-slate-200 p-4"><div className="flex flex-wrap gap-2"><span className="rounded bg-teal-50 px-2 py-1 text-[10px] font-bold uppercase text-teal-800">{sectionLabels[f.section]} · {f.origin}</span><span className={`rounded px-2 py-1 text-[10px] font-semibold uppercase ${f.certainty === "observed" ? "bg-slate-100 text-slate-600" : "bg-amber-50 text-amber-800"}`}>{f.certainty.replaceAll("_", " ")}</span><span className="rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-600">{f.review}</span></div><label className="mt-3 block text-xs font-semibold text-slate-600">Proposed wording<textarea value={text} onChange={e => setText(e.target.value)} maxLength={500} rows={2} className="mt-2 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6" /></label>{f.limitation && <p className="mt-2 text-xs text-amber-800">Limit: {f.limitation}</p>}<p className="mt-2 text-xs text-slate-500">{f.category ? `${f.category} · ` : ""}{f.origin === "visual" ? "Candidate visual observation; any transcript citation provides context only." : f.origin === "spoken" ? "Reported in conversation; not independently visually verified." : "Clinician supplied"}{f.provider ? ` · ${f.provider}` : ""}</p><p className="mt-3 text-xs font-bold text-slate-600">Evidence</p><div className="mt-1 space-y-1">{f.evidence.map((ev, i) => <p key={i} className="text-xs leading-5 text-slate-500"><a className="font-semibold text-teal-700 underline" href={`#source-${ev.sourceId}`}>{sources.find(s => s.id === ev.sourceId)?.label || "Missing source"} [{ev.sourceId.slice(0, 8)}]</a>{ev.transcript && <span> · {ev.transcript.speaker} · {displayTimestamp(ev.transcript.startMs)}–{displayTimestamp(ev.transcript.endMs)}</span>} — {ev.role === "context" ? "Transcript context (not visual proof): " : ""}{ev.quote}</p>)}</div>{sources.filter(s => s.kind === "image" && f.evidence.some(e => e.sourceId === s.id)).map(s => <a key={s.id} href={`#source-${s.id}`}><img src={`/api/media/${s.mediaId}`} alt={`Evidence: ${s.label}`} className="mt-3 h-28 rounded object-contain" /></a>)}<label className="mt-3 block text-xs font-semibold text-slate-600">Reviewer note for edits or uncertainty<input value={note} onChange={e => setNote(e.target.value)} maxLength={500} placeholder="Explain corrections or limitations" className="mt-2 w-full rounded-lg border border-slate-200 p-2.5 text-sm" /></label><div className="mt-3 flex gap-2"><button disabled={disabled || !text.trim()} onClick={() => onSave("accepted", text, note)} className={`${button} bg-teal-800 text-white`}>Accept</button><button disabled={disabled} onClick={() => onSave("rejected", text, note)} className={`${button} border border-slate-200 text-slate-600`}>Reject</button></div></article>;
 }
 
 function ManualFinding({ sources, disabled, onSave }: { sources: Encounter["sources"]; disabled: boolean; onSave: (section: string, sourceId: string, text: string, evidenceQuote: string) => void }) {

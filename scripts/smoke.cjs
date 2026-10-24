@@ -25,15 +25,21 @@ const assert = require('node:assert/strict');
   assert.equal((await fetch(`${base}/api/media/${e.sources[0].mediaId}`, { headers: { Cookie: doctorCookie } })).status, 200);
   assert.notEqual((await fetch(`${base}/api/media/${e.sources[0].mediaId}`)).status, 200);
   assert.equal((await action('export', { encounterId: e.id, revision: e.revision }, doctorCookie)).status, 400);
+  const selected = await action('target', { encounterId: e.id, revision: e.revision, sourceId: e.sources[0].id, target: { region: 'auto', crop: { x: 0, y: 0, width: 1, height: 1 }, diameterMm: null, examSurface: 'not_confirmed' } }, doctorCookie);
+  assert.equal(selected.status, 200); e = selected.body.encounter;
   if (process.env.LIVE_AI === '1') {
     const result = await action('analyze', { encounterId: e.id, revision: e.revision }, doctorCookie);
     assert.equal(result.status, 200, result.body.error || 'live analysis failed');
     e = result.body.encounter;
     console.log(`LIVE AI: ${result.body.encounter.findings.length} pending finding(s), ${result.body.encounter.model}`);
+    for (const f of e.findings) {
+      const rejected = await action('review', { encounterId: e.id, revision: e.revision, findingId: f.id, review: 'rejected', text: f.text, attributes: f.observation?.attributes, reviewNote: 'Live smoke check only, no clinical interpretation.' }, doctorCookie);
+      assert.equal(rejected.status, 200); e = rejected.body.encounter;
+    }
   }
   const manual = await action('manual', { encounterId: e.id, revision: e.revision, section: 'O', sourceId: e.sources[0].id, text: 'Staged brown patch is visible.', evidenceQuote: 'Central region of synthetic image' }, doctorCookie);
   assert.equal(manual.status, 200); e = manual.body.encounter;
-  const accepted = await action('review', { encounterId: e.id, revision: e.revision, findingId: e.findings[0].id, review: 'accepted', text: e.findings[0].text, reviewNote: 'Synthetic image is limited; clinician reviewed the source.' }, doctorCookie);
+  const accepted = await action('review', { encounterId: e.id, revision: e.revision, findingId: e.findings.at(-1).id, review: 'accepted', text: e.findings.at(-1).text, reviewNote: 'Synthetic image is limited; clinician reviewed the source.' }, doctorCookie);
   assert.equal(accepted.status, 200); e = accepted.body.encounter;
   const approved = await action('approve', { encounterId: e.id, revision: e.revision, physician: 'Dr Demo' }, doctorCookie);
   assert.equal(approved.status, 200); e = approved.body.encounter;
@@ -41,7 +47,7 @@ const assert = require('node:assert/strict');
   assert.equal(exported.status, 200); e = exported.body.encounter;
   const repeated = await action('export', { encounterId: e.id, revision: e.revision }, doctorCookie);
   assert.equal(repeated.body.encounter.export.id, e.export.id);
-  const edited = await action('review', { encounterId: e.id, revision: e.revision, findingId: e.findings[0].id, review: 'accepted', text: 'Edited clinician wording.', reviewNote: 'Changed after approval' }, doctorCookie);
+  const edited = await action('review', { encounterId: e.id, revision: e.revision, findingId: e.findings.at(-1).id, review: 'accepted', text: 'Edited clinician wording.', reviewNote: 'Changed after approval' }, doctorCookie);
   assert.equal(edited.body.encounter.approval, null);
   assert.equal((await action('export', { encounterId: e.id, revision: edited.body.encounter.revision }, doctorCookie)).status, 400);
   console.log('PASS: one-use QR, consent, quality, media auth, approval, idempotent simulated export, edit revocation');

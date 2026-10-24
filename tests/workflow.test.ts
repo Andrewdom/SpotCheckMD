@@ -105,6 +105,40 @@ test("API: consent revocation cancels an in-flight run without stranding analysi
   assert.equal((await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision })).status, 200);
 });
 
+test("API: image-only defaults to MedGemma without an OpenAI key", async () => {
+  const previousOpenAI = process.env.OPENAI_API_KEY, previousProvider = process.env.IMAGE_ANALYSIS_PROVIDER;
+  delete process.env.OPENAI_API_KEY; delete process.env.IMAGE_ANALYSIS_PROVIDER;
+  try {
+    const s = await session(); await s.upload("image"); const before = providerRequests;
+    const result = await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision });
+    assert.equal(result.status, 200); s.e = result.body.encounter;
+    assert.equal(providerRequests, before + 1);
+    assert.equal(s.e.analysis, "ready");
+    assert.deepEqual(s.e.findings.map(f => f.origin), ["visual"]);
+    assert.equal(s.e.model, "google/medgemma-1.5-4b-it");
+  } finally {
+    if (previousOpenAI === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousOpenAI;
+    if (previousProvider === undefined) delete process.env.IMAGE_ANALYSIS_PROVIDER; else process.env.IMAGE_ANALYSIS_PROVIDER = previousProvider;
+  }
+});
+
+test("API: missing MedGemma key reports MedGemma and never falls back", async () => {
+  const previousKey = process.env.MEDGEMMA_API_KEY;
+  delete process.env.MEDGEMMA_API_KEY;
+  try {
+    const s = await session(); await s.upload("image"); const before = providerRequests;
+    const result = await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision });
+    assert.equal(result.status, 200); s.e = result.body.encounter;
+    assert.equal(providerRequests, before);
+    assert.equal(s.e.analysis, "failed");
+    assert.match(s.e.analysisError, /MedGemma is not configured/);
+    assert.doesNotMatch(s.e.analysisError, /OpenAI/);
+    assert.match(s.e.analysisWarnings!.join(" "), /no fallback/i);
+  } finally {
+    if (previousKey === undefined) delete process.env.MEDGEMMA_API_KEY; else process.env.MEDGEMMA_API_KEY = previousKey;
+  }
+});
+
 test("API: audio-only never invokes MedGemma", async () => {
   const s = await session(); await s.upload("audio"); const before = providerRequests;
   s.e = (await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision })).body.encounter;

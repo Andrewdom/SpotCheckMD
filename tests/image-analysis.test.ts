@@ -113,6 +113,21 @@ test("image provider failure leaves spoken findings and redacted warnings, never
   assert.equal(result.findings.length, 1); assert.equal(result.findings[0].origin, "spoken");
   assert.match(result.warnings[0], /No fallback/); assert.doesNotMatch(result.warnings[0], /private/);
 });
+test("missing MedGemma configuration produces a model-specific image-only warning", async () => {
+  const previousUrl = process.env.MEDGEMMA_URL, previousKey = process.env.MEDGEMMA_API_KEY;
+  delete process.env.MEDGEMMA_URL; delete process.env.MEDGEMMA_API_KEY;
+  try {
+    const deps = dependencies(); deps.provider = configuredImageProvider; deps.document = deps.transcribe = async () => { throw Error("must not run"); };
+    const result = await analyzeEncounter(encounter([image]), "run", deps);
+    assert.equal(result.findings.length, 0);
+    assert.match(result.warnings[0], /MedGemma is not configured/);
+    assert.match(result.warnings[0], /no fallback/i);
+    assert.doesNotMatch(result.warnings[0], /OpenAI/i);
+  } finally {
+    if (previousUrl === undefined) delete process.env.MEDGEMMA_URL; else process.env.MEDGEMMA_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.MEDGEMMA_API_KEY; else process.env.MEDGEMMA_API_KEY = previousKey;
+  }
+});
 test("approval and deterministic SOAP only finalize accepted evidence", async () => {
   const result = await analyzeEncounter(encounter(), "run", dependencies()); const e = encounter(); e.findings = result.findings;
   assert.match(composeNote(e), /Not documented/); assert.doesNotMatch(composeNote(e), /Possible visible/);
@@ -129,6 +144,7 @@ test("encounter edits cancel an owned run and revoke approval", () => {
 });
 test("MedGemma transport validates model identity, structured data and timeout failures", async () => {
   process.env.MEDGEMMA_URL = "http://127.0.0.1:8000"; process.env.MEDGEMMA_API_KEY = "test-only-not-a-secret";
+  delete process.env.OPENAI_API_KEY;
   let sent: Record<string, unknown> = {};
   const fetcher = (async (_url, init) => { sent = JSON.parse(String(init?.body)); return Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "test-revision", latencyMs: 5 }); }) as typeof fetch;
   const result = await medgemmaProvider(fetcher).analyze(request());
@@ -144,5 +160,6 @@ test("MedGemma transport validates model identity, structured data and timeout f
   const q8Result = await medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime: q8, latencyMs: 1 })).analyze(request());
   assert.deepEqual(q8Result.runtime, q8);
   await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime: { ...runtime, quantization: "unknown" }, latencyMs: 1 })).analyze(request()), /no fallback/i);
-  process.env.IMAGE_ANALYSIS_PROVIDER = "typo"; assert.throws(configuredImageProvider, /Unknown/); delete process.env.IMAGE_ANALYSIS_PROVIDER;
+  delete process.env.IMAGE_ANALYSIS_PROVIDER; assert.equal(configuredImageProvider().id, "medgemma");
+  process.env.IMAGE_ANALYSIS_PROVIDER = "openai"; assert.throws(configuredImageProvider, /only application image provider/); delete process.env.IMAGE_ANALYSIS_PROVIDER;
 });

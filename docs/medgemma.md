@@ -63,11 +63,11 @@ Configure the Next.js server in ignored `.env.local` or deployment secrets:
 
 | Variable | Purpose/default |
 | --- | --- |
-| `IMAGE_ANALYSIS_PROVIDER` | Set `medgemma` to opt in. Default `openai` preserves GPT-4o availability for existing setups. Unknown values are errors. |
+| `IMAGE_ANALYSIS_PROVIDER` | Optional explicit value `medgemma`; unset also selects MedGemma. Other values are rejected in the application workflow. |
 | `MEDGEMMA_URL` | Full service base URL, e.g. `http://127.0.0.1:8000`; HTTPS required off loopback |
 | `MEDGEMMA_API_KEY` | Same shared service credential; never use a `NEXT_PUBLIC_` variable |
 | `MEDGEMMA_TIMEOUT_MS` | Default 120000; allowed 1000–600000 milliseconds per image/context request |
-| `OPENAI_API_KEY` | Existing audio transcription and transcript documentation; also required for the GPT-4o image baseline |
+| `OPENAI_API_KEY` | Optional audio transcription and transcript documentation only; the separate research comparison utility supplies its GPT-4o image adapter directly |
 | `AURA_DATA_DIR` | Existing storage override; keep demo media and transcripts outside source control |
 
 The Python service does not read Next.js `.env.local` automatically. Set the shared key in both processes. Keep `HF_TOKEN` on the inference host. MedGemma image-only operation does not require an OpenAI key. Audio and transcript documentation still do; those failures are reported independently.
@@ -76,7 +76,7 @@ The Python service does not read Next.js `.env.local` automatically. Set the sha
 npm run dev
 ```
 
-In the app, choose a fictional encounter, confirm consent, save specialty/image type and any confirmed context, and capture authorized media. Analyze, inspect image thumbnails, transcript excerpts, attribution, limitations, and conflicts; accept/reject/edit each finding. Acknowledge partial-analysis warnings before approving. Export remains a local simulation. A model failure never switches to GPT-4o; choose the baseline explicitly through configuration and restart Next.js.
+In the app, choose a fictional encounter, confirm consent, save specialty/image type and any confirmed context, and capture authorized media. Analyze, inspect image thumbnails, transcript excerpts, attribution, limitations, and conflicts; accept/reject/edit each finding. Acknowledge partial-analysis warnings before approving. Export remains a local simulation. A model failure never switches to GPT-4o. The GPT-4o image adapter remains available only to the explicit research comparison utility.
 
 ## Experimental Intel Mac / native CPU backend
 

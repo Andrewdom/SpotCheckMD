@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type { Encounter, Finding, Source, Conflict } from "../domain";
 import type { Suggested } from "../analysis";
+import { AppError } from "../store";
 import { validateImageAnalysis, transcriptWindows, type ImageProvider, type ImageResult } from "./contracts";
 const uid = () => randomBytes(16).toString("hex");
+const publicMedGemmaError = (error: unknown) => error instanceof AppError && /^MedGemma\b/.test(error.message) && /no fallback was used\.$/i.test(error.message) && error.message.length <= 300 ? error.message : null;
 export type PipelineDeps = {
   ensureCurrent?: () => Promise<unknown>;
   provider: () => ImageProvider;
@@ -49,7 +51,7 @@ export async function analyzeEncounter(snapshot: Encounter, runId: string, deps:
   if (images.length && !contextFailed) {
     let provider: ImageProvider | undefined;
     try { provider = deps.provider(); }
-    catch { warnings.push("Image provider configuration is invalid. No fallback was used."); }
+    catch (error) { warnings.push(publicMedGemmaError(error) || "Image provider configuration is invalid. No fallback was used."); }
     if (provider) for (const image of images) {
       let bytes: Buffer;
       try { bytes = await deps.readMedia(image); }
@@ -67,7 +69,10 @@ export async function analyzeEncounter(snapshot: Encounter, runId: string, deps:
           }
           for (const c of result.analysis.conflicts) conflicts.push({ id: uid(), findingIds: c.characteristicIds.map(id => ids.get(id)!), description: `${c.description}\nTranscript context [${c.transcriptSourceId}]: “${c.transcriptQuote}”`, resolution: "" });
           if (!result.analysis.characteristics.length) warnings.push(`${image.label}: no visual characteristics were assessable. ${result.analysis.limitations.join(" ")}`);
-        } catch { warnings.push(`${image.label}${window ? ` (transcript ${window.start}–${window.end})` : ""}: ${provider.id} analysis failed, timed out, or returned invalid evidence. No fallback was used; this image/context needs manual review or retry.`); }
+        } catch (error) {
+          const fixedMedGemmaError = publicMedGemmaError(error);
+          warnings.push(`${image.label}${window ? ` (transcript ${window.start}–${window.end})` : ""}: ${fixedMedGemmaError || `${provider.id} analysis failed, timed out, or returned invalid evidence. No fallback was used; this image/context needs manual review or retry.`}`);
+        }
       }
     }
   }

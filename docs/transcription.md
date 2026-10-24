@@ -10,10 +10,13 @@ Keep credentials in server-only environment configuration. Never put the permane
 TRANSCRIPTION_PROVIDER=assemblyai
 ASSEMBLYAI_API_KEY=...
 ASSEMBLYAI_TIMEOUT_MS=180000
+SOAP_DOCUMENTATION_PROVIDER=extractive
 # Optional provider model overrides:
 # ASSEMBLYAI_SPEECH_MODEL=universal-3-5-pro
 # ASSEMBLYAI_STREAMING_MODEL=u3-rt-pro
 ```
+
+`SOAP_DOCUMENTATION_PROVIDER=extractive` is the zero-cost default when `OPENAI_API_KEY` is absent. After speaker confirmation, it copies exact patient-speaker statements into pending Subjective findings with timestamps. It runs locally and performs no diagnosis, clinical summarization, medication reconciliation, assessment, or plan generation. The clinician must edit, reject, or accept each item. Set the provider to `openai` only when a server-side OpenAI key is configured and its external processing is authorized.
 
 Before processing PHI, execute the appropriate AssemblyAI BAA and configure data retention, model-training opt-out, region, deletion, access control, audit, and incident-response requirements for the intended deployment. The local demo's anonymous sessions, JSON storage and free-text clinician identity are not production controls.
 

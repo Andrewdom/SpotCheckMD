@@ -4,6 +4,7 @@ import { assemblyAITranscriptionProvider, configuredTranscriptionProvider } from
 import { assemblyAIStreamingSession } from "../lib/transcription/streaming";
 import { createTranscriptArtifact, locateTranscriptEvidence } from "../lib/transcription/types";
 import { downsampleToPCM16 } from "../lib/transcription/pcm";
+import { extractiveSubjectiveFindings, soapDocumentationMode } from "../lib/transcription/soap";
 import { composeNote, reviewBlockers } from "../lib/domain";
 import { encounter } from "./fixtures";
 
@@ -54,6 +55,20 @@ test("speaker-role confirmation gates approved spoken evidence and appears in co
   assert.deepEqual(reviewBlockers(e), []);
   assert.match(composeNote(e), /patient; 0:01–0:02/);
   assert.doesNotMatch(composeNote(e), /9\/10/);
+});
+
+test("free local SOAP mode extracts only exact confirmed patient statements", () => {
+  const artifact = createTranscriptArtifact({ bytes: Buffer.from("synthetic"), transcriptSourceId: "transcript-1", audioSourceId: "audio-1", provider: "assemblyai", model: "mock", finalizedAt: new Date().toISOString(), settings: { medicalMode: true, speakerLabels: true, keyterms: [] }, utterances: completed.utterances.map((utterance, index) => ({ id: `utterance-${index + 1}`, speaker: utterance.speaker, startMs: utterance.start, endMs: utterance.end, text: utterance.text, words: utterance.words.map(word => ({ text: word.text, startMs: word.start, endMs: word.end, confidence: word.confidence, speaker: word.speaker })) })) });
+  const roles = { artifactId: artifact.id, patientSpeaker: "A", clinicianSpeaker: "B", confirmedAt: new Date().toISOString() };
+  const findings = extractiveSubjectiveFindings(artifact, "A", roles);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].section, "S");
+  assert.match(findings[0].text, /I have intense pain/);
+  assert.equal(findings[0].evidence[0].quote, "I have intense pain.");
+  assert.equal(findings[0].evidence[0].transcript?.speaker, "A");
+  assert.doesNotMatch(findings[0].text, /cetirizine/);
+  delete process.env.OPENAI_API_KEY; delete process.env.SOAP_DOCUMENTATION_PROVIDER;
+  assert.equal(soapDocumentationMode(), "extractive");
 });
 
 test("streaming session returns only a short-lived browser token URL and PCM conversion is bounded", async () => {

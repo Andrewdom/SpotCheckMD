@@ -13,3 +13,11 @@ Create `reviewed-cases.json` as an array like the schema below (this **example i
 ```
 
 Run `node scripts/evaluate.mjs evals/reviewed-cases.json`. Do not put identifying clinical data or actual patient photos in this repository. No fairness or clinical accuracy claim should be made until enough independently labeled data and appropriate review exist.
+
+## Region-first workflow additions
+
+Score body-region routing separately from finding descriptions. Include unsupported anatomy, objects, very tight crops, mixed regions, no discernible finding, and unclear views. Measure wrong-route rate and appropriate abstention; a wrong route should not be hidden by a fluent final note.
+
+For each selected region, annotate skin or oral fields independently. Count unsupported attributes and missed attributes separately even though the UI groups several attributes into one description. Test no-scale inputs (must never invent millimeters), clinician-entered size provenance, conflicting surface entries, routing overrides, and exact 10 mm boundary handling. Record whether the crop omitted a clinically relevant feature. Review skin-tone, lighting, phone, and crop-size strata independently. Crops are clinician-selected and are not ground-truth lesion masks.
+
+The automated tests in `tests/` validate software rules using synthetic images and scripted API responses. They do not validate model accuracy, diagnostic performance, clinical safety, or fairness.

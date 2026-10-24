@@ -7,3 +7,5 @@ out/
 
 .env.local
 .aura-data/
+
+next-env.d.ts

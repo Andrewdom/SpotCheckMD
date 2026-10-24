@@ -1,7 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { assessImage, suggest, transcribe } from "@/lib/analysis";
+import { assessImage, suggestTranscript, transcribe, detectAnatomy, describePhoto, cropPhoto, PROMPT_VERSION } from "@/lib/analysis";
+import { targetSchema, parseReviewedAttributes, observationText, observationLimit } from "@/lib/observations";
 import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Finding, type Source } from "@/lib/domain";
 import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, createSession, dataRoot, digest, mediaPath, respondError, transaction, uid } from "@/lib/store";
 
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
     }
     if (action === "upload") return await upload(request);
     if (action === "analyze") return await analyze(request);
+    if (action === "detect-region") return await detectRegion(request);
     const body = await request.json();
     const encounterId = required(body.encounterId, 32);
     if (action === "create") {
@@ -57,15 +59,16 @@ export async function POST(request: Request) {
         const session = auth(db, request);
         if (session.encounterId) throw new AppError(403, "QR sessions cannot create encounters.");
         const now = new Date().toISOString();
-        const e: Encounter = { id: uid(), owner: session.owner, patientId: patient.id, specialty: patient.specialty, createdAt: now, revision: 0, consent: false, patientConfirmed: false, sources: [], findings: [], conflicts: [], analysis: "none", analysisError: "", model: "", promptVersion: "visual-v1", approval: null, export: null, audit: [{ at: now, action: "created", revision: 0 }] };
+        const e: Encounter = { id: uid(), owner: session.owner, patientId: patient.id, specialty: patient.specialty, createdAt: now, revision: 0, consent: false, patientConfirmed: false, sources: [], findings: [], conflicts: [], analysis: "none", analysisError: "", model: "", promptVersion: PROMPT_VERSION, approval: null, export: null, audit: [{ at: now, action: "created", revision: 0 }] };
         db.encounters.push(e); return safe(e);
       });
       return Response.json({ encounter });
     }
-    const encounter = await transaction(db => {
+    const encounter = await transaction(async db => {
       auth(db, request, encounterId);
       const e = db.encounters.find(v => v.id === encounterId)!;
       checkRevision(e, body.revision);
+      if (e.analysis === "running" && action !== "pair") throw new AppError(409, "Wait for analysis to finish before changing this encounter.");
       if (action === "confirm") {
         if (typeof body.confirmed !== "boolean" || typeof body.consent !== "boolean") throw new AppError(400, "Confirm identity and consent.");
         e.patientConfirmed = body.confirmed; e.consent = body.consent; changed(e, "confirmation updated");
@@ -73,10 +76,25 @@ export async function POST(request: Request) {
         const token = randomBytes(24).toString("base64url");
         db.pairings.push({ hash: digest(token), encounterId: e.id, expires: Date.now() + 5 * 60 * 1000, used: false });
         return { encounter: safe(e), token };
+      } else if (action === "target") {
+        const source = e.sources.find(s => s.id === body.sourceId && s.kind === "image");
+        const parsed = targetSchema.safeParse(body.target);
+        if (!source || !parsed.success) throw new AppError(400, "Choose a valid photo selection, region, and optional positive diameter in millimeters.");
+        await cropPhoto(await readFile(mediaPath(source.mediaId!)), parsed.data);
+        source.target = parsed.data;
+        e.findings = e.findings.filter(f => f.origin !== "visual" || !f.evidence.some(v => v.sourceId === source.id));
+        e.conflicts = e.conflicts.filter(c => c.findingIds.every(id => e.findings.some(f => f.id === id)));
+        e.analysis = "none"; e.analysisError = ""; changed(e, "photo selection and clinician measurements updated");
       } else if (action === "review") {
         const f = e.findings.find(v => v.id === body.findingId);
         if (!f || !["accepted", "rejected", "pending"].includes(body.review)) throw new AppError(400, "Invalid review decision.");
-        f.review = body.review; f.text = required(body.text, 500); f.reviewNote = required(body.reviewNote, 500);
+        if (f.observation) {
+          try { f.observation = parseReviewedAttributes(f.observation, body.attributes); }
+          catch { throw new AppError(400, "The description contains an invalid field for this body region."); }
+          f.text = observationText(f.observation); f.limitation = observationLimit(f.observation);
+          f.certainty = f.observation.attributes.assessability === "not_assessable" ? "not_assessable" : "uncertain";
+        } else { f.text = required(body.text, 500); }
+        f.review = body.review; f.reviewNote = required(body.reviewNote, 500);
         if (!f.text && f.review === "accepted") throw new AppError(400, "An accepted finding needs text.");
         changed(e, "finding reviewed");
       } else if (action === "manual") {
@@ -127,6 +145,7 @@ async function upload(request: Request) {
     auth(db, request, id);
     const e = db.encounters.find(v => v.id === id)!;
     checkRevision(e, revision);
+    if (e.analysis === "running") throw new AppError(409, "Wait for analysis to finish before adding media.");
     if (!e.consent || !e.patientConfirmed) throw new AppError(400, "Confirm the patient and capture consent first.");
     if (!image && e.sources.some(s => s.kind === "audio")) throw new AppError(400, "This demo supports one recording per encounter. Create another encounter to record again.");
     if (e.sources.length >= 8) throw new AppError(400, "This demo supports up to eight sources per encounter.");
@@ -147,29 +166,59 @@ async function analyze(request: Request) {
     checkRevision(e, body.revision);
     if (!e.consent || !e.patientConfirmed || !e.sources.some(s => s.kind === "image" || s.kind === "audio")) throw new AppError(400, "Confirm patient and consent, then capture media.");
     if (e.analysis === "running") throw new AppError(409, "Analysis is already running.");
+    const photos = e.sources.filter(s => s.kind === "image" && s.quality?.status !== "retake");
+    if (photos.some(s => !s.target)) throw new AppError(400, "Select and save an area of interest for each usable photo first.");
+    if (!photos.length && !e.sources.some(s => s.kind === "audio")) throw new AppError(400, "Upload a photo that is not marked for retake, or record audio.");
     e.analysis = "running"; e.analysisError = ""; changed(e, "analysis started"); return structuredClone(e);
   });
   try {
     const audio = snapshot.sources.find(s => s.kind === "audio");
-    const images = snapshot.sources.filter(s => s.kind === "image");
-    const transcript = audio ? { id: uid(), text: await transcribe(await readFile(mediaPath(audio.mediaId!)), audio.mime || "audio/webm") } : null;
-    const suggestions = await suggest(await Promise.all(images.map(async s => ({ id: s.id, quality: s.quality!, bytes: await readFile(mediaPath(s.mediaId!)) }))), transcript, snapshot.specialty);
+    const images = snapshot.sources.filter(s => s.kind === "image" && s.quality?.status !== "retake");
+    const existingTranscript = snapshot.sources.find(s => s.kind === "transcript");
+    const transcript = existingTranscript ? { id: existingTranscript.id, text: existingTranscript.text! } : audio ? { id: uid(), text: await transcribe(await readFile(mediaPath(audio.mediaId!)), audio.mime || "audio/webm") } : null;
+    const descriptions: ({ sourceId: string } & Awaited<ReturnType<typeof describePhoto>>)[] = [];
+    for (const s of images) descriptions.push({ sourceId: s.id, ...await describePhoto({ id: s.id, quality: s.quality!, bytes: await readFile(mediaPath(s.mediaId!)), target: s.target! }) });
+    const suggestions = [...descriptions.map(d => d.suggestion), ...(transcript ? await suggestTranscript(transcript, snapshot.specialty) : [])];
     const encounter = await transaction(db => {
       auth(db, request, id);
       const e = db.encounters.find(v => v.id === id)!;
       checkRevision(e, snapshot.revision);
-      if (transcript) e.sources.push({ id: transcript.id, kind: "transcript", label: "Unverified transcript", text: transcript.text, createdAt: new Date().toISOString(), mediaId: audio?.mediaId });
+      if (transcript && !existingTranscript) e.sources.push({ id: transcript.id, kind: "transcript", label: "Unverified transcript", text: transcript.text, createdAt: new Date().toISOString(), mediaId: audio?.mediaId });
+      for (const d of descriptions) e.sources.find(s => s.id === d.sourceId)!.anatomy = d.anatomy;
       const sources = new Map(e.sources.map(s => [s.id, s]));
-      e.findings = suggestions.map((s): Finding => ({ id: uid(), section: s.section, text: s.text, originalText: s.text, origin: s.sourceIds.some(v => sources.get(v)?.kind === "image") ? "visual" : "spoken", certainty: s.certainty, limitation: s.limitation, evidence: s.sourceIds.map((sourceId, i) => ({ sourceId, quote: s.evidenceQuotes[i] })), review: "pending", reviewNote: "" }));
+      e.findings = [...e.findings.filter(f => f.origin === "clinician"), ...suggestions.map((s): Finding => ({ id: uid(), section: s.section, text: s.text, originalText: s.text, origin: s.sourceIds.some(v => sources.get(v)?.kind === "image") ? "visual" : "spoken", certainty: s.certainty, limitation: s.limitation, evidence: s.sourceIds.map((sourceId, i) => ({ sourceId, quote: s.evidenceQuotes[i] })), review: "pending", reviewNote: "", observation: s.observation, originalAttributes: s.observation?.attributes }))];
       e.conflicts = [];
       for (const visual of e.findings.filter(f => f.origin === "visual")) for (const spoken of e.findings.filter(f => f.origin === "spoken")) {
         if (visual.text.toLowerCase().includes("left") && spoken.text.toLowerCase().includes("right") || visual.text.toLowerCase().includes("right") && spoken.text.toLowerCase().includes("left")) e.conflicts.push({ id: uid(), findingIds: [visual.id, spoken.id], description: "Possible left/right discrepancy between image and spoken statement. Verify orientation and patient details.", resolution: "" });
       }
-      e.analysis = "ready"; e.model = "gpt-transcribe + gpt-4o"; changed(e, "analysis completed"); return safe(e);
+      e.analysis = "ready"; e.model = audio ? "gpt-4o-transcribe + gpt-4o" : "gpt-4o"; e.promptVersion = PROMPT_VERSION; changed(e, "region-specific analysis completed"); return safe(e);
     });
     return Response.json({ encounter });
   } catch (error) {
     await transaction(db => { const e = db.encounters.find(v => v.id === id); if (e && e.analysis === "running" && e.revision === snapshot.revision) { e.analysis = "failed"; e.analysisError = error instanceof AppError ? error.message : "Analysis failed. Retry with fictional data."; changed(e, "analysis failed"); } });
     return respondError(error);
   }
+}
+
+async function detectRegion(request: Request) {
+  const body = await request.json();
+  const snapshot = await transaction(db => {
+    auth(db, request, body.encounterId);
+    const e = db.encounters.find(v => v.id === body.encounterId)!;
+    checkRevision(e, body.revision);
+    if (!e.consent || !e.patientConfirmed) throw new AppError(400, "Confirm the patient and processing consent first.");
+    if (e.analysis === "running") throw new AppError(409, "Wait for analysis to finish.");
+    const source = e.sources.find(s => s.id === body.sourceId && s.kind === "image");
+    if (!source || source.quality?.status === "retake") throw new AppError(400, "Choose a photo that is not marked for retake.");
+    return { source, revision: e.revision };
+  });
+  const anatomy = await detectAnatomy(await readFile(mediaPath(snapshot.source.mediaId!)));
+  const encounter = await transaction(db => {
+    auth(db, request, body.encounterId);
+    const e = db.encounters.find(v => v.id === body.encounterId)!;
+    checkRevision(e, snapshot.revision);
+    e.sources.find(s => s.id === snapshot.source.id)!.anatomy = anatomy;
+    changed(e, "body-region suggestion generated"); return safe(e);
+  });
+  return Response.json({ encounter });
 }

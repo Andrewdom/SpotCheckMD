@@ -1,3 +1,4 @@
+import type { Anatomy, ObservationTarget, VisualObservation } from "./observations";
 export type Specialty = "skin" | "throat";
 export type Section = "S" | "O" | "A" | "P";
 export type Evidence = { sourceId: string; quote: string };
@@ -7,6 +8,7 @@ export type Source = {
   label: string; text?: string; mediaId?: string; start?: number; end?: number;
   mime?: string;
   quality?: Quality; width?: number; height?: number; createdAt: string;
+  target?: ObservationTarget; anatomy?: Anatomy;
 };
 export type Finding = {
   id: string; section: Section; text: string; origin: "visual" | "spoken" | "clinician";
@@ -14,6 +16,7 @@ export type Finding = {
   limitation: string; evidence: Evidence[];
   review: "pending" | "accepted" | "rejected";
   reviewNote: string; originalText: string;
+  observation?: VisualObservation; originalAttributes?: VisualObservation["attributes"];
 };
 export type Conflict = { id: string; findingIds: string[]; description: string; resolution: string };
 export type Encounter = {
@@ -45,6 +48,7 @@ export function reviewBlockers(e: Encounter): string[] {
     if (!f.evidence.length || f.evidence.some(v => !ids.has(v.sourceId))) errors.push("A finding has missing source evidence.");
     if (f.certainty !== "observed" && !f.reviewNote.trim()) errors.push("Explain how uncertain or unassessable findings were handled.");
     if (f.text !== f.originalText && !f.reviewNote.trim()) errors.push("Explain edited findings.");
+    if (f.observation && JSON.stringify(f.observation.attributes) !== JSON.stringify(f.originalAttributes) && !f.reviewNote.trim()) errors.push("Explain changes to the structured description.");
     if (f.evidence.some(v => e.sources.find(s => s.id === v.sourceId)?.quality?.status === "retake")) errors.push("Reject findings from images marked for retake; capture a better image.");
     if (f.evidence.some(v => e.sources.find(s => s.id === v.sourceId)?.quality?.status === "limited") && !f.reviewNote.trim()) errors.push("Document the limitation of findings from limited-quality images.");
   }

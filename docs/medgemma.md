@@ -131,7 +131,7 @@ node --env-file=.env.local --import tsx scripts/verify-local-medgemma.ts /privat
 
 ## Private SCIN integration verification
 
-[SCIN](https://github.com/google-research-datasets/scin) contains real-person dermatology photographs and self-reported metadata. It is governed by the [SCIN Data Use License](https://github.com/google-research-datasets/scin/blob/main/LICENSE), which includes attribution requirements and prohibits re-identification. Images may be sensitive or graphic. Keep all downloaded images, metadata, generated manifests and model reports outside the repository. This workflow permits only the local MedGemma service; do not send SCIN material to OpenAI or another external provider.
+[SCIN](https://github.com/google-research-datasets/scin) contains real-person dermatology photographs and self-reported metadata. It is governed by the [SCIN Data Use License](https://github.com/google-research-datasets/scin/blob/main/LICENSE), which includes attribution requirements and prohibits re-identification. Images may be sensitive or graphic. Keep all downloaded images, metadata, generated manifests and model reports outside the repository. This workflow permits only loopback HTTP or private Tailscale HTTPS to the authenticated MedGemma service; do not send SCIN material to OpenAI or another external provider.
 
 The preparation utility pins the official metadata object generations used for selection, excludes the publicly reported missing image, rejects paths outside the official image directory, validates JPEG/PNG decoding, and removes duplicate hashes within the prepared subset. Selection rotates deterministic skin-tone buckets when labels are available and requires a reported nonsensitive body location. Skin-tone metadata is used only for test-set selection. Dermatologist condition labels never enter the generated model manifest or transcript.
 
@@ -170,6 +170,22 @@ The report separates image decoding, generation, JSON parsing, Python schema/evi
 Two unique SCIN cases completed both local variants on the pinned CPU runtime. All four requests passed image decoding, generation, JSON parsing, Python schema/evidence validation, TypeScript schema/evidence validation and source-attribution checks. The measured end-to-end times were approximately 110 and 96 seconds for the first case, then 276 and 234 seconds for the second case (image-only and image-with-context respectively). A five-case private manifest was prepared, but the remaining three cases were left unrun when the project owner asked to stop testing after the second case passed. One next-case request had begun before the queue was interrupted; it was cancelled and has no successful report.
 
 These results establish that the corrected local transport and validation pipeline can return contract-valid output for those two inputs. They are not a measurement of clinical accuracy, fairness, diagnostic performance or readiness for clinical use. Images, metadata, manifests and reports remain in private ignored directories and were not committed.
+
+### Unraid Q8 verification recorded October 24, 2026
+
+The dedicated Unraid service completed one authorized SCIN image-only request
+through private Tailscale HTTPS. The request passed image decoding, Q8_0 model
+generation, JSON parsing, Python schema/evidence validation, TypeScript
+schema/evidence validation, and source attribution in approximately 52.0
+seconds end to end (51.5 seconds reported by the service). Peak sampled usage
+was 3.057 GiB container RAM, 3,690 MiB GPU memory, and 955% container CPU on
+the 10-CPU limit. The project owner asked to stop after this image passed, so
+the SCIN context variant was not run on the server.
+
+This is an integration result for one input, not clinical validation or a
+performance guarantee. The SCIN photograph, derived context, API key, and
+generated report remain in private permission-restricted directories outside
+the repository.
 
 ## Hosted service
 
@@ -215,4 +231,9 @@ Checks completed before testing was paused: 28 Node mock/unit/API/evaluation tes
 
 Official gated model access, download and source checksum verification succeeded. The pinned local conversion and native CPU service startup succeeded, including authenticated health and unauthenticated-request rejection. Both original synthetic TypeScript requests failed (image-only after approximately 207 seconds; image plus fictional transcript after approximately 182 seconds). Their old reports did not retain a stage. A preserved controlled native response from the same setup completed generation (`finish_reason=stop`) but returned the JSON Schema itself, which was rejected at schema validation. Inspection found that the llama.cpp request placed the schema outside the endpoint's required `response_format.json_schema.schema` wrapper. After correcting that wrapper, four real SCIN requests across two images and both context variants passed the complete integration contract as recorded above. This verifies the integration path for those requests and does not establish clinical correctness.
 
-CUDA memory/latency, Docker deployment, hosted inference, live OpenAI calls, phone capture, and clinical comparisons remain unverified. No clinical performance or cost results have been invented. Private model files, credentials and live verification artifacts are excluded from source control.
+The Unraid Docker/CUDA path and private Tailscale transport have been exercised
+for the single SCIN request recorded above. Broader CUDA performance, reboot
+recovery, other hosted environments, live OpenAI calls, phone capture, and
+clinical comparisons remain unverified. No clinical performance or cost
+results have been invented. Private model files, credentials and live
+verification artifacts are excluded from source control.

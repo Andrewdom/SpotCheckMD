@@ -41,7 +41,11 @@ async function main() {
     throw Error("Usage: tsx scripts/verify-scin-medgemma.ts MANIFEST NEW_OUTPUT --variant image-only|image-and-context [--case ID] --run-live");
   }
   const url = new URL(process.env.MEDGEMMA_URL || "");
-  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") throw Error("SCIN verification only permits the local MedGemma service");
+  const loopback = url.protocol === "http:" && url.hostname === "127.0.0.1";
+  const privateTailscale = url.protocol === "https:" && url.hostname.endsWith(".ts.net") && (!url.port || url.port === "443");
+  if (url.username || url.password || url.search || url.hash || (!loopback && !privateTailscale)) {
+    throw Error("SCIN verification only permits loopback HTTP or private Tailscale HTTPS");
+  }
   const output = path.resolve(outputArg);
   await mkdir(output, { mode: 0o700 });
   let stage = "manifest validation";

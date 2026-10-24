@@ -140,6 +140,9 @@ test("MedGemma transport validates model identity, structured data and timeout f
   const runtime = { engine: "llama.cpp", engineRevision: "a".repeat(40), converterRevision: "b".repeat(40), quantization: "Q4_K_M", modelSha256: "c".repeat(64), projectorSha256: "d".repeat(64) };
   const local = await medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime, latencyMs: 1 })).analyze(request());
   assert.deepEqual(local.runtime, runtime);
+  const q8 = { ...runtime, quantization: "Q8_0" };
+  const q8Result = await medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime: q8, latencyMs: 1 })).analyze(request());
+  assert.deepEqual(q8Result.runtime, q8);
   await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime: { ...runtime, quantization: "unknown" }, latencyMs: 1 })).analyze(request()), /no fallback/i);
   process.env.IMAGE_ANALYSIS_PROVIDER = "typo"; assert.throws(configuredImageProvider, /Unknown/); delete process.env.IMAGE_ANALYSIS_PROVIDER;
 });

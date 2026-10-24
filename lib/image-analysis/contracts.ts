@@ -38,7 +38,7 @@ export type ImageInput = { id: string; bytes: Buffer; quality: Quality };
 export type ImageRequest = { image: ImageInput; transcript: TranscriptContext | null; context: ClinicalContext };
 export const imageRuntimeSchema = z.object({
   engine: z.literal("llama.cpp"), engineRevision: z.string().regex(/^[0-9a-f]{40}$/),
-  converterRevision: z.string().regex(/^[0-9a-f]{40}$/), quantization: z.literal("Q4_K_M"),
+  converterRevision: z.string().regex(/^[0-9a-f]{40}$/), quantization: z.enum(["Q4_K_M", "Q8_0"]),
   modelSha256: z.string().regex(/^[0-9a-f]{64}$/), projectorSha256: z.string().regex(/^[0-9a-f]{64}$/),
 }).strict();
 export type ImageResult = { runtime?: z.infer<typeof imageRuntimeSchema>; inputContext?: ClinicalContext; inputTranscriptSourceId?: string | null; analysis: ImageAnalysis; model: string; modelRevision: string; latencyMs: number; contextRange: { start: number; end: number } | null };

@@ -127,7 +127,7 @@ class LlamaCpp:
             time.sleep(0.5)
         raise TimeoutError("Local model startup timed out")
 
-    def __call__(self, image, prompt):
+    def __call__(self, image, prompt, schema=None):
         if self.process.poll() is not None:
             raise RuntimeError("Local runtime exited")
         self.last_diagnostics = {}
@@ -143,7 +143,7 @@ class LlamaCpp:
             # response_format.json_schema.schema. Supplying schema at the top
             # level silently falls back to an unconstrained JSON object.
             "response_format": {"type": "json_schema", "json_schema": {
-                "name": "image_analysis", "strict": True, "schema": self.schema}},
+                "name": "image_analysis", "strict": True, "schema": schema or self.schema}},
         })
         response.raise_for_status()
         if len(response.content) > 200000:

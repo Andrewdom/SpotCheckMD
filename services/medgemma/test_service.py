@@ -22,9 +22,11 @@ class FakeModel:
     def __init__(self, result=None):
         self.result = response() if result is None else result
         self.prompts = []
-    def __call__(self, image, prompt):
+        self.schemas = []
+    def __call__(self, image, prompt, schema):
         assert image.mode == "RGB"
         self.prompts.append(prompt)
+        self.schemas.append(schema)
         return self.result if isinstance(self.result, str) else json.dumps(self.result)
 
 @pytest.fixture
@@ -43,6 +45,10 @@ def test_context_and_image_reach_model(client, payload):
     assert "urgent_care" in model.prompts[0]
     assert "image-1" in model.prompts[0]
     assert "NEVER proof of visibility" in model.prompts[0]
+    assert model.schemas[0]["properties"]["imageSourceId"]["const"] == "image-1"
+    assert model.schemas[0]["properties"]["specialty"]["const"] == "urgent_care"
+    evidence = model.schemas[0]["properties"]["characteristics"]["items"]["properties"]["evidence"]["properties"]
+    assert evidence["imageSourceId"]["const"] == "image-1"
     assert result.headers["cache-control"] == "no-store"
 
 def test_auth_before_inference(client, payload):

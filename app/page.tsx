@@ -34,7 +34,9 @@ export default function Dashboard() {
   const stream = useRef<MediaStream | null>(null);
   const active = useRef<Encounter | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const cameraInput = useRef<HTMLInputElement>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const cameraStream = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const patient = PATIENTS.find(p => p.id === current?.patientId);
   const blockers = current ? reviewBlockers(current) : [];
   const note = current ? composeNote(current, Boolean(current.approval)) : "";
@@ -68,11 +70,34 @@ export default function Dashboard() {
     void QRCode.toDataURL(pairUrl, { width: 224, margin: 2, color: { dark: "#12383b", light: "#ffffff" } }).then(setQr);
   }, [pairUrl]);
   useEffect(() => {
+    const video = videoRef.current;
+    const camera = cameraStream.current;
+    if (!cameraOpen || !video || !camera) return;
+    video.srcObject = camera;
+    void video.play().catch(() => {
+      setMessage("The camera preview could not start.");
+      camera.getTracks().forEach(track => track.stop());
+      cameraStream.current = null;
+      setCameraOpen(false);
+    });
+  }, [cameraOpen]);
+  useEffect(() => {
+    if (stage === "capture" || !cameraStream.current) return;
+    cameraStream.current.getTracks().forEach(track => track.stop());
+    cameraStream.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraOpen(false);
+  }, [stage]);
+  useEffect(() => {
     if (!recording) return;
     const timer = setInterval(() => setSeconds(n => n + 1), 1000);
     return () => clearInterval(timer);
   }, [recording]);
-  useEffect(() => () => { recorder.current?.stop(); stream.current?.getTracks().forEach(t => t.stop()); }, []);
+  useEffect(() => () => {
+    recorder.current?.stop();
+    stream.current?.getTracks().forEach(track => track.stop());
+    cameraStream.current?.getTracks().forEach(track => track.stop());
+  }, []);
 
   async function act(action: string, payload: Record<string, unknown> = {}, after?: Stage) {
     if (!active.current) return;
@@ -111,6 +136,59 @@ export default function Dashboard() {
       setMessage(kind === "image" ? "Image saved to the fictional encounter. Review the quality check before analysis." : "Audio captured. Run analysis to create a transcript and suggested findings.");
     } catch (error) { setMessage((error as Error).message); } finally { setBusy(false); }
   }
+  async function openCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMessage("Camera access is unavailable. Use HTTPS or localhost in a supported browser.");
+      return;
+    }
+    try {
+      const camera = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      cameraStream.current = camera;
+      setCameraOpen(true);
+    } catch {
+      setMessage("Could not access the camera. Check browser permissions and use HTTPS.");
+    }
+  }
+
+  function closeCamera() {
+    cameraStream.current?.getTracks().forEach(track => track.stop());
+    cameraStream.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraOpen(false);
+  }
+
+  async function capturePhoto() {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+      setMessage("Wait for the camera preview, then try again.");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setMessage("Could not capture the image.");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const photo = await new Promise<Blob | null>(resolve => {
+      canvas.toBlob(resolve, "image/jpeg", 0.92);
+    });
+    if (!photo) {
+      setMessage("Could not create the image file.");
+      return;
+    }
+    closeCamera();
+    await upload(
+      new File([photo], "camera-" + Date.now() + ".jpg", { type: "image/jpeg" }),
+      "image",
+    );
+  }
+
   async function startRecording() {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { setMessage("This browser does not support microphone capture. Use HTTPS or localhost."); return; }
     try {
@@ -143,7 +221,138 @@ export default function Dashboard() {
         {stage === "capture" && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
           <div className="space-y-6"><ClinicalContextEditor encounter={current} disabled={busy || recording} onSave={context => void act("context", { context })} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Confirm before capture</h2><p className="mt-2 text-xs leading-5 text-slate-500">In a real deployment, QR pairing would require clinician authentication and an independently verified patient identity. This local demo uses fictional records only.</p><div className="mt-5 space-y-3"><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.patientConfirmed} onChange={e => void act("confirm", { confirmed: e.target.checked, consent: current.consent })} className="size-4 accent-teal-700" /> Patient and encounter confirmed</label><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.consent} onChange={e => void act("confirm", { confirmed: current.patientConfirmed, consent: e.target.checked })} className="size-4 accent-teal-700" /> All participants consented to recording and processing</label></div><button disabled={busy} onClick={() => void act("pair")} className={`${button} mt-5 border border-teal-200 bg-teal-50 text-teal-800`}><Link2 size={15} /> Create one-use QR link</button>{pairUrl && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs text-slate-600">Scan this QR on a phone within 5 minutes. Anyone holding it can open this fictional encounter.</p>{qr && <img src={qr} alt="One-use pairing QR code" className="my-3 h-48 w-48 rounded bg-white" />}<a className="break-all text-xs text-teal-700 underline" href={pairUrl}>{pairUrl}</a></div>}</section>
           <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><Mic size={19} className="text-teal-700" /> Encounter audio</h2><div className="my-5 flex h-16 items-center justify-center gap-1 rounded-xl bg-teal-50" aria-hidden="true">{Array.from({ length: 33 }, (_, i) => <span key={i} className={`w-1.5 rounded-full bg-teal-500 ${recording ? "audio-bar-active" : ""}`} style={{ height: `${10 + (i * 13 + i * i * 3) % 42}px`, animationDelay: `${i * -42}ms` }} />)}</div><p className="mb-4 text-xs text-slate-500">{recording ? `Recording ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "Audio is captured only after you start recording."}</p><button disabled={busy || !current.consent || !current.patientConfirmed} onClick={() => recording ? stopRecording() : void startRecording()} className={`${button} w-full bg-teal-800 text-white hover:bg-teal-700`}>{recording ? <Square size={16} /> : <Mic size={16} />}{recording ? "Stop and save recording" : "Start recording"}</button><p className="mt-3 text-[11px] leading-5 text-slate-500">Use short fictional dialogue. Speaker identity and patient statements must be checked during review.</p></section></div>
-          <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><Camera size={19} className="text-teal-700" /> Visual evidence</h2><p className="mt-2 text-xs text-slate-500">Photograph or upload a staged, non-patient image. Automated quality guidance is only a heuristic.</p><div className="mt-5 grid grid-cols-2 gap-2"><input ref={cameraInput} type="file" accept="image/jpeg,image/png" capture="environment" className="hidden" onChange={e => { void upload(e.target.files?.[0], "image"); e.target.value = ""; }} /><input ref={fileInput} type="file" accept="image/jpeg,image/png" className="hidden" onChange={e => { void upload(e.target.files?.[0], "image"); e.target.value = ""; }} /><button disabled={busy || !current.consent || !current.patientConfirmed} className={`${button} border border-slate-200`} onClick={() => cameraInput.current?.click()}><Camera size={16} /> Camera</button><button disabled={busy || !current.consent || !current.patientConfirmed} className={`${button} border border-slate-200`} onClick={() => fileInput.current?.click()}><Upload size={16} /> Upload</button></div><div className="mt-5 space-y-4">{current.sources.filter(s => s.kind === "image").map(s => <article key={s.id} className="rounded-xl border border-slate-200 p-3"><div className="h-44 overflow-hidden rounded-lg bg-slate-100"><img alt={`${s.label}, source ${s.id.slice(0, 8)}`} src={`/api/media/${s.mediaId}`} style={{ transform: `scale(${zoom})` }} className="h-full w-full object-contain" /></div><p className="mt-3 text-sm font-semibold">{s.label} <span className={`ml-2 rounded px-2 py-1 text-[10px] uppercase ${s.quality?.status === "retake" ? "bg-red-50 text-red-700" : s.quality?.status === "limited" ? "bg-amber-50 text-amber-800" : "bg-teal-50 text-teal-700"}`}>{s.quality?.status || "pending"}</span></p><p className="mt-1 text-xs text-slate-500">{s.width} × {s.height} · source {s.id.slice(0, 8)}</p>{s.quality?.reasons.map((r, i) => <p key={r} className="mt-2 text-xs text-amber-800">{r}. {s.quality?.guidance[i]}</p>)}</article>)}{!current.sources.some(s => s.kind === "image") && <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 text-xs text-slate-400"><ImagePlus size={27} /> No image captured yet</div>}</div>{current.sources.some(s => s.kind === "image") && <label className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ZoomIn size={15} /> Preview zoom <input aria-label="Preview zoom" type="range" min="1" max="3" step="0.1" value={zoom} onChange={e => setZoom(Number(e.target.value))} className="flex-1 accent-teal-700" /> {zoom}×</label>}</section>
+          <section className={card + " p-5 sm:p-6"}>
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Camera size={19} className="text-teal-700" />
+              Visual evidence
+            </h2>
+            <p className="mt-2 text-xs text-slate-500">
+              Photograph or upload a staged, non-patient image. Automated quality guidance is only a heuristic.
+            </p>
+
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/jpeg,image/png"
+                className="hidden"
+                onChange={event => {
+                  void upload(event.target.files?.[0], "image");
+                  event.target.value = "";
+                }}
+              />
+              <button
+                disabled={busy || cameraOpen || !current.consent || !current.patientConfirmed}
+                className={button + " border border-slate-200"}
+                onClick={() => void openCamera()}
+              >
+                <Camera size={16} />
+                Camera
+              </button>
+              <button
+                disabled={busy || !current.consent || !current.patientConfirmed}
+                className={button + " border border-slate-200"}
+                onClick={() => fileInput.current?.click()}
+              >
+                <Upload size={16} />
+                Upload
+              </button>
+            </div>
+
+            {cameraOpen && (
+              <div className="mt-4 space-y-3">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  aria-label="Live camera preview"
+                  className="max-h-[28rem] w-full rounded-xl bg-black object-contain"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className={button + " bg-teal-800 text-white"}
+                    onClick={() => void capturePhoto()}
+                  >
+                    <Camera size={16} />
+                    Capture photo
+                  </button>
+                  <button
+                    type="button"
+                    className={button + " border border-slate-200"}
+                    onClick={closeCamera}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 space-y-4">
+              {current.sources
+                .filter(source => source.kind === "image")
+                .map(source => (
+                  <article key={source.id} className="rounded-xl border border-slate-200 p-3">
+                    <div className="h-44 overflow-hidden rounded-lg bg-slate-100">
+                      <img
+                        alt={source.label + ", source " + source.id.slice(0, 8)}
+                        src={"/api/media/" + source.mediaId}
+                        style={{ transform: "scale(" + zoom + ")" }}
+                        className="h-full w-full object-contain"
+                      />
+                    </div>
+                    <p className="mt-3 text-sm font-semibold">
+                      {source.label}
+                      <span className={
+                        "ml-2 rounded px-2 py-1 text-[10px] uppercase " +
+                        (source.quality?.status === "retake"
+                          ? "bg-red-50 text-red-700"
+                          : source.quality?.status === "limited"
+                            ? "bg-amber-50 text-amber-800"
+                            : "bg-teal-50 text-teal-700")
+                      }>
+                        {source.quality?.status || "pending"}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {source.width} × {source.height} · source {source.id.slice(0, 8)}
+                    </p>
+                    {source.quality?.reasons.map((reason, index) => (
+                      <p key={reason} className="mt-2 text-xs text-amber-800">
+                        {reason}. {source.quality?.guidance[index]}
+                      </p>
+                    ))}
+                  </article>
+                ))}
+
+              {!current.sources.some(source => source.kind === "image") && (
+                <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 text-xs text-slate-400">
+                  <ImagePlus size={27} />
+                  No image captured yet
+                </div>
+              )}
+            </div>
+
+            {current.sources.some(source => source.kind === "image") && (
+              <label className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+                <ZoomIn size={15} />
+                Preview zoom
+                <input
+                  aria-label="Preview zoom"
+                  type="range"
+                  min="1"
+                  max="3"
+                  step="0.1"
+                  value={zoom}
+                  onChange={event => setZoom(Number(event.target.value))}
+                  className="flex-1 accent-teal-700"
+                />
+                {zoom}×
+              </label>
+            )}
+          </section>
           <div className="lg:col-span-2"><div className={`${card} flex flex-wrap items-center justify-between gap-4 p-5`}><div><p className="font-semibold">Ready to propose findings?</p><p className="mt-1 text-xs text-slate-500">AI suggestions stay pending until a clinician reviews each one. Retake warnings remain visible.</p></div><button disabled={busy || recording || !current.consent || !current.patientConfirmed || !current.sources.some(s => s.kind === "image" || s.kind === "audio")} onClick={() => void act("analyze", {}, "review")} className={`${button} bg-teal-800 text-white`}>{busy ? <LoaderCircle className="animate-spin" size={16} /> : <Sparkles size={16} />} {busy ? "Processing…" : "Analyze & review"}</button></div></div>
         </div>}
         {stage === "review" && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)]"><div className="space-y-6">

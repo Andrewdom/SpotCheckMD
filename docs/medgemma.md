@@ -38,6 +38,10 @@ python3 -m venv .venv
 
 Install the appropriate CUDA-compatible PyTorch build for your host if needed. Dependency ranges are bounded, not a GPU-tested lockfile; freeze exact versions for a reproducible deployment after verification on that host. Model downloads need network access and cache disk space.
 
+**Intel macOS limitation:** The current `torch>=2.6` service requirements do not resolve on macOS x86_64: compatible PyTorch wheels are unavailable. This was checked on an Intel i9 Mac with 16 GiB RAM and a 4 GiB AMD Radeon Pro 5500M. Selecting `MEDGEMMA_DEVICE=cpu` does not fix package compatibility; FP32 model weights also leave insufficient practical memory headroom on that machine. Do not describe these setup commands as verified on Intel Macs. A quantized llama.cpp runtime is being investigated separately, but is not yet integrated or validated with this service. It must preserve the official model's source revision and record conversion/quantization provenance, with explicit selection and no automatic fallback.
+
+For local model access, install the Hugging Face CLI (`uv tool install 'huggingface-hub>=1,<2'`), accept the official model's terms in your own account, then run `hf auth login` interactively. Never supply a token in chat, a committed file, or a command-line argument. The library can use the resulting local token cache; `HF_TOKEN` remains an alternative for service environments. The local access probe returned a gated-repository error before authentication; no weights or real generation were verified by that probe.
+
 Configure the Python service environment through your shell or secret manager (not source files):
 
 | Variable | Purpose/default |

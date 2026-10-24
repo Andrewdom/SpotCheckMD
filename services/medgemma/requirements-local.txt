@@ -1,0 +1,7 @@
+# Experimental native CPU backend. No PyTorch/Transformers inference dependency.
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+pillow>=11,<13
+jsonschema>=4.23,<5
+httpx>=0.28,<1
+python-dotenv>=1,<2

@@ -1,9 +1,13 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { assessImage, suggest, transcribe } from "@/lib/analysis";
-import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Finding, type Source } from "@/lib/domain";
+import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Source } from "@/lib/domain";
 import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, createSession, dataRoot, digest, mediaPath, respondError, transaction, uid } from "@/lib/store";
+
+import { contextSchema, PROMPT_VERSION } from "@/lib/image-analysis/contracts";
+import { configuredImageProvider } from "@/lib/image-analysis/providers";
+import { analyzeEncounter } from "@/lib/image-analysis/pipeline";
 
 export const runtime = "nodejs";
 const safe = (e: Encounter) => ({ ...e, owner: undefined, sources: e.sources.map(({ mediaId, ...source }) => ({ ...source, mediaId: mediaId || undefined })) });
@@ -50,6 +54,33 @@ export async function POST(request: Request) {
     if (action === "analyze") return await analyze(request);
     const body = await request.json();
     const encounterId = required(body.encounterId, 32);
+    if (action === "delete-encounter") {
+      const mediaIds = await transaction(db => {
+        const session = auth(db, request, encounterId);
+        if (session.encounterId) throw new AppError(403, "Paired capture sessions cannot delete encounters.");
+
+        const encounterIndex = db.encounters.findIndex(item => item.id === encounterId);
+        if (encounterIndex < 0) throw new AppError(404, "Encounter not found.");
+        const encounter = db.encounters[encounterIndex];
+        checkRevision(encounter, body.revision);
+
+        db.encounters.splice(encounterIndex, 1);
+        db.pairings = db.pairings.filter(pairing => pairing.encounterId !== encounterId);
+        db.sessions = db.sessions.filter(session => session.encounterId !== encounterId);
+
+        const removedMediaIds = [...new Set(
+          encounter.sources.map(source => source.mediaId).filter((id): id is string => Boolean(id)),
+        )];
+        return removedMediaIds.filter(mediaId =>
+          !db.encounters.some(item => item.sources.some(source => source.mediaId === mediaId)),
+        );
+      });
+
+      await Promise.all(mediaIds.map(mediaId =>
+        unlink(mediaPath(mediaId)).catch(() => {}),
+      ));
+      return Response.json({ deleted: true });
+    }
     if (action === "create") {
       const patient = PATIENTS.find(p => p.id === body.patientId);
       if (!patient) throw new AppError(400, "Choose a fictional demo patient.");
@@ -62,11 +93,56 @@ export async function POST(request: Request) {
       });
       return Response.json({ encounter });
     }
+    if (action === "remove-image") {
+      const result = await transaction(db => {
+        auth(db, request, encounterId);
+        const encounter = db.encounters.find(item => item.id === encounterId)!;
+        checkRevision(encounter, body.revision);
+
+        const sourceIndex = encounter.sources.findIndex(
+          source => source.id === body.sourceId && source.kind === "image",
+        );
+        if (sourceIndex < 0) throw new AppError(404, "Image not found.");
+
+        const [source] = encounter.sources.splice(sourceIndex, 1);
+        const removedFindingIds = new Set(
+          encounter.findings
+            .filter(finding => finding.evidence.some(evidence => evidence.sourceId === source.id))
+            .map(finding => finding.id),
+        );
+        encounter.findings = encounter.findings.filter(finding => !removedFindingIds.has(finding.id));
+        encounter.conflicts = encounter.conflicts.filter(
+          conflict => conflict.findingIds.every(id => !removedFindingIds.has(id)),
+        );
+        encounter.imageAnalyses = [];
+        encounter.analysisWarnings = [];
+        encounter.warningsAcknowledged = false;
+        encounter.analysis = "none";
+        encounter.analysisError = "";
+        encounter.activeAnalysis = undefined;
+        changed(encounter, "image removed");
+
+        return { encounter: safe(encounter), mediaId: source.mediaId };
+      });
+
+      if (result.mediaId) {
+        await unlink(mediaPath(result.mediaId)).catch(() => {});
+      }
+      return Response.json({ encounter: result.encounter });
+    }
+
     const encounter = await transaction(db => {
       auth(db, request, encounterId);
       const e = db.encounters.find(v => v.id === encounterId)!;
       checkRevision(e, body.revision);
-      if (action === "confirm") {
+      if (action === "context") {
+        const context = contextSchema.safeParse(body.context);
+        if (!context.success) throw new AppError(400, "Choose a supported specialty/image type and bounded clinical context.");
+        e.clinicalContext = context.data; e.specialty = context.data.specialty;
+        changed(e, "clinical context updated");
+      } else if (action === "acknowledge-warnings") {
+        e.warningsAcknowledged = true; changed(e, "analysis limitations acknowledged");
+      } else if (action === "confirm") {
         if (typeof body.confirmed !== "boolean" || typeof body.consent !== "boolean") throw new AppError(400, "Confirm identity and consent.");
         e.patientConfirmed = body.confirmed; e.consent = body.consent; changed(e, "confirmation updated");
       } else if (action === "pair") {
@@ -78,12 +154,14 @@ export async function POST(request: Request) {
         if (!f || !["accepted", "rejected", "pending"].includes(body.review)) throw new AppError(400, "Invalid review decision.");
         f.review = body.review; f.text = required(body.text, 500); f.reviewNote = required(body.reviewNote, 500);
         if (!f.text && f.review === "accepted") throw new AppError(400, "An accepted finding needs text.");
+        for (const conflict of e.conflicts.filter(c => c.findingIds.includes(f.id))) conflict.resolution = "";
         changed(e, "finding reviewed");
       } else if (action === "manual") {
         const source = e.sources.find(v => v.id === body.sourceId);
         const wording = required(body.text, 500).trim();
         const evidenceQuote = required(body.evidenceQuote, 250).trim();
         if (!source || !wording || !evidenceQuote || !["S", "O", "A", "P"].includes(body.section)) throw new AppError(400, "Provide a section, wording, and an observation linked to an existing source.");
+        if (source.kind === "transcript" && !source.text?.includes(evidenceQuote)) throw new AppError(400, "The transcript quote must match the stored source exactly.");
         e.findings.push({ id: uid(), section: body.section, text: wording, originalText: wording, origin: "clinician", certainty: "observed", limitation: "", evidence: [{ sourceId: source.id, quote: evidenceQuote }], review: "pending", reviewNote: "" });
         changed(e, "clinician observation added");
       } else if (action === "resolve") {
@@ -119,6 +197,12 @@ async function upload(request: Request) {
   if (!image && kind !== "audio") throw new AppError(400, "Choose audio or image.");
   if (file.size === 0 || file.size > (image ? 10 : 20) * 1024 * 1024) throw new AppError(413, "File is empty or exceeds the demo size limit.");
   if (image ? !["image/jpeg", "image/png"].includes(file.type) : !["audio/webm", "audio/mp4", "audio/wav", "audio/mpeg", "audio/ogg"].includes(file.type)) throw new AppError(415, "Unsupported media format.");
+  await transaction(db => {
+    auth(db, request, id);
+    const e = db.encounters.find(v => v.id === id)!;
+    checkRevision(e, revision);
+    if (!e.consent || !e.patientConfirmed) throw new AppError(400, "Confirm patient and consent before media processing.");
+  });
   const original = Buffer.from(await file.arrayBuffer());
   const assessment = image ? await assessImage(original) : null;
   const mediaId = uid(), sourceId = uid();
@@ -133,7 +217,7 @@ async function upload(request: Request) {
     const source: Source = { id: sourceId, kind: image ? "image" : "audio", label: image ? `Photo ${e.sources.filter(s => s.kind === "image").length + 1}` : "Encounter audio", mediaId, mime: image ? "image/jpeg" : file.type, quality: assessment?.quality, width: assessment?.width, height: assessment?.height, createdAt: new Date().toISOString() };
     await mkdir(dataRoot, { recursive: true, mode: 0o700 });
     await writeFile(mediaPath(mediaId), bytes, { flag: "wx", mode: 0o600 });
-    e.sources.push(source); e.findings = []; e.conflicts = []; e.analysis = "none"; e.analysisError = ""; changed(e, "media added");
+    e.sources.push(source); e.findings = []; e.conflicts = []; e.imageAnalyses = []; e.analysisWarnings = []; e.warningsAcknowledged = false; e.activeAnalysis = undefined; e.analysis = "none"; e.analysisError = ""; changed(e, "media added");
     return safe(e);
   });
   return Response.json({ encounter });
@@ -141,35 +225,61 @@ async function upload(request: Request) {
 async function analyze(request: Request) {
   const body = await request.json();
   const id = required(body.encounterId, 32);
+  const runId = uid();
   const snapshot = await transaction(db => {
     auth(db, request, id);
     const e = db.encounters.find(v => v.id === id)!;
     checkRevision(e, body.revision);
-    if (!e.consent || !e.patientConfirmed || !e.sources.some(s => s.kind === "image" || s.kind === "audio")) throw new AppError(400, "Confirm patient and consent, then capture media.");
-    if (e.analysis === "running") throw new AppError(409, "Analysis is already running.");
-    e.analysis = "running"; e.analysisError = ""; changed(e, "analysis started"); return structuredClone(e);
+    if (!e.consent || !e.patientConfirmed || !e.sources.some(s => ["image", "audio", "transcript"].includes(s.kind))) throw new AppError(400, "Confirm patient and consent, then capture media.");
+    if (e.analysis === "running" && e.activeAnalysis && e.activeAnalysis.expiresAt > Date.now()) throw new AppError(409, "Analysis is already running.");
+    e.analysis = "running"; e.analysisError = "";
+    e.activeAnalysis = { id: runId, expiresAt: Date.now() + 30 * 60 * 1000 };
+    changed(e, "analysis started");
+    return structuredClone(e);
+  });
+  const ensureCurrent = () => transaction(db => {
+    auth(db, request, id);
+    const e = db.encounters.find(v => v.id === id)!;
+    checkRevision(e, snapshot.revision);
+    if (!e.consent || !e.patientConfirmed || e.activeAnalysis?.id !== runId || e.activeAnalysis.expiresAt <= Date.now()) throw new AppError(409, "Analysis was cancelled or expired. Review the current encounter and retry.");
   });
   try {
-    const audio = snapshot.sources.find(s => s.kind === "audio");
-    const images = snapshot.sources.filter(s => s.kind === "image");
-    const transcript = audio ? { id: uid(), text: await transcribe(await readFile(mediaPath(audio.mediaId!)), audio.mime || "audio/webm") } : null;
-    const suggestions = await suggest(await Promise.all(images.map(async s => ({ id: s.id, quality: s.quality!, bytes: await readFile(mediaPath(s.mediaId!)) }))), transcript, snapshot.specialty);
+    const result = await analyzeEncounter(snapshot, runId, {
+      provider: configuredImageProvider, transcribe,
+      document: (transcript, specialty) => suggest([], transcript, specialty),
+      readMedia: source => readFile(mediaPath(source.mediaId!)), ensureCurrent,
+    });
+    await ensureCurrent();
     const encounter = await transaction(db => {
       auth(db, request, id);
       const e = db.encounters.find(v => v.id === id)!;
       checkRevision(e, snapshot.revision);
-      if (transcript) e.sources.push({ id: transcript.id, kind: "transcript", label: "Unverified transcript", text: transcript.text, createdAt: new Date().toISOString(), mediaId: audio?.mediaId });
-      const sources = new Map(e.sources.map(s => [s.id, s]));
-      e.findings = suggestions.map((s): Finding => ({ id: uid(), section: s.section, text: s.text, originalText: s.text, origin: s.sourceIds.some(v => sources.get(v)?.kind === "image") ? "visual" : "spoken", certainty: s.certainty, limitation: s.limitation, evidence: s.sourceIds.map((sourceId, i) => ({ sourceId, quote: s.evidenceQuotes[i] })), review: "pending", reviewNote: "" }));
-      e.conflicts = [];
-      for (const visual of e.findings.filter(f => f.origin === "visual")) for (const spoken of e.findings.filter(f => f.origin === "spoken")) {
-        if (visual.text.toLowerCase().includes("left") && spoken.text.toLowerCase().includes("right") || visual.text.toLowerCase().includes("right") && spoken.text.toLowerCase().includes("left")) e.conflicts.push({ id: uid(), findingIds: [visual.id, spoken.id], description: "Possible left/right discrepancy between image and spoken statement. Verify orientation and patient details.", resolution: "" });
-      }
-      e.analysis = "ready"; e.model = "gpt-transcribe + gpt-4o"; changed(e, "analysis completed"); return safe(e);
+      if (e.activeAnalysis?.id !== runId || !e.consent || !e.patientConfirmed) throw new AppError(409, "Analysis superseded.");
+      e.sources.push(...result.newSources);
+      // Preserve clinician edits and prior decisions when retrying; replace only pending AI proposals.
+      const retained = e.findings.filter(f => f.origin === "clinician" || f.review !== "pending");
+      const retainedIds = new Set(retained.map(f => f.id));
+      e.findings = [...retained, ...result.findings];
+      e.conflicts = [...e.conflicts.filter(c => c.findingIds.every(id => retainedIds.has(id))), ...result.conflicts];
+      e.imageAnalyses = [...(e.imageAnalyses || []), ...result.analyses];
+      e.analysisWarnings = result.warnings; e.warningsAcknowledged = false;
+      e.analysis = result.findings.length || result.analyses.length ? "ready" : "failed";
+      e.analysisError = e.analysis === "failed" ? "No new findings were generated. Review analysis warnings or add a supported manual observation." : "";
+      e.activeAnalysis = undefined;
+      e.model = [...new Set([...result.analyses.map(a => a.model), ...(result.findings.some(f => f.origin === "spoken") ? ["gpt-4o (transcript)"] : [])])].join(" + ");
+      e.promptVersion = PROMPT_VERSION;
+      changed(e, "analysis completed"); return safe(e);
     });
     return Response.json({ encounter });
   } catch (error) {
-    await transaction(db => { const e = db.encounters.find(v => v.id === id); if (e && e.analysis === "running" && e.revision === snapshot.revision) { e.analysis = "failed"; e.analysisError = error instanceof AppError ? error.message : "Analysis failed. Retry with fictional data."; changed(e, "analysis failed"); } });
+    await transaction(db => {
+      const e = db.encounters.find(v => v.id === id);
+      if (e?.activeAnalysis?.id === runId) {
+        e.analysis = "failed"; e.activeAnalysis = undefined;
+        e.analysisError = "Analysis failed or expired. Retry with authorized demonstration inputs.";
+        changed(e, "analysis failed");
+      }
+    });
     return respondError(error);
   }
 }

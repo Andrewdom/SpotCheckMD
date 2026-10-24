@@ -196,6 +196,14 @@ def inspect_image(data: bytes) -> dict[str, object]:
             return {"format": image.format, "width": image.width, "height": image.height}
 
 
+def decode_supported_image(data: bytes) -> dict[str, object] | None:
+    # Photos above the pixel budget raise Pillow bomb errors, not ValueError.
+    try:
+        return inspect_image(data)
+    except (OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+        return None
+
+
 def read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8-sig") as stream:
         return list(csv.DictReader(stream))
@@ -224,8 +232,11 @@ def prepare(output: Path, count: int) -> None:
         try:
             image_meta = download(object_url(image_object), temporary, MAX_IMAGE_BYTES)
             data = temporary.read_bytes()
-            decoded = inspect_image(data)
         except (OSError, ValueError, httpx.HTTPError):
+            temporary.unlink(missing_ok=True)
+            continue
+        decoded = decode_supported_image(data)
+        if decoded is None:
             temporary.unlink(missing_ok=True)
             continue
         if image_meta["sha256"] in hashes:

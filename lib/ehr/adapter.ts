@@ -41,7 +41,7 @@ export const demoEhr: EhrAdapter = {
       note = { id: uid(), patientId: encounter.patientId, encounterId: encounter.id, encounterDate: encounter.createdAt,
         approvedAt: approval.at, savedAt: new Date().toISOString(), physician: approval.physician, text: approval.note,
         digest: approval.digest, revision: approval.revision, ...(previous ? { amendsId: previous.id } : {}),
-        provenance: { model: encounter.model, promptVersion: encounter.promptVersion, imageRuns: (encounter.imageAnalyses || []).map(result => ({ runId: result.runId, provider: result.provider, model: result.model, modelRevision: result.modelRevision, ...(result.runtime ? { runtime: structuredClone(result.runtime) } : {}) })) },
+        provenance: { model: encounter.model, promptVersion: encounter.promptVersion, imageRuns: (encounter.imageAnalyses || []).map(result => ({ runId: result.runId, provider: result.provider, model: result.model, modelRevision: result.modelRevision, ...(result.runtime ? { runtime: structuredClone(result.runtime) } : {}) })), transcripts: (encounter.transcripts || []).map(artifact => ({ id: artifact.id, digest: artifact.digest, audioSha256: artifact.audioSha256, provider: artifact.provider, model: artifact.model, medicalMode: artifact.settings.medicalMode, speakerLabels: artifact.settings.speakerLabels })), ...(encounter.transcriptRoles ? { transcriptRoles: structuredClone(encounter.transcriptRoles) } : {}) },
         ...(encounter.chartContext ? { chartContext: structuredClone(encounter.chartContext) } : {}) } satisfies ChartNote;
       chart.notes.push(note); chart.version++;
     }

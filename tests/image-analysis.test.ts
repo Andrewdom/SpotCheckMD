@@ -8,10 +8,11 @@ import { analyzeEncounter, type PipelineDeps } from "../lib/image-analysis/pipel
 import { medgemmaProvider, configuredImageProvider } from "../lib/image-analysis/providers";
 import { composeNote, reviewBlockers } from "../lib/domain";
 import { changed } from "../lib/store";
+import { createTranscriptArtifact } from "../lib/transcription/types";
 import { analysis, encounter, image, request, transcript } from "./fixtures";
 
 function dependencies(calls: ImageRequest[] = []): PipelineDeps {
-  return { provider: () => ({ id: "medgemma", analyze: async input => { calls.push(input); return { analysis: analysis(input), model: "google/medgemma-1.5-4b-it", modelRevision: "mock", latencyMs: 1, contextRange: input.transcript ? { start: input.transcript.start, end: input.transcript.end } : null }; } }), transcribe: async () => transcript.text!, readMedia: async () => Buffer.from("synthetic"), document: async t => [{ section: "S", text: "Patient reports no pain", certainty: "observed", limitation: "", sourceIds: [t.id], evidenceQuotes: ["Patient reports no pain"] }] };
+  return { provider: () => ({ id: "medgemma", analyze: async input => { calls.push(input); return { analysis: analysis(input), model: "google/medgemma-1.5-4b-it", modelRevision: "mock", latencyMs: 1, contextRange: input.transcript ? { start: input.transcript.start, end: input.transcript.end } : null }; } }), transcriber: () => ({ id: "assemblyai", transcribe: async request => createTranscriptArtifact({ bytes: request.bytes, transcriptSourceId: request.transcriptSourceId, audioSourceId: request.audioSourceId, provider: "assemblyai", model: "mock-medical", finalizedAt: image.createdAt, settings: { medicalMode: true, speakerLabels: true, keyterms: request.keyterms }, utterances: [{ id: "utterance-1", speaker: "A", startMs: 1000, endMs: 2500, text: transcript.text!, words: [{ text: "Patient", startMs: 1000, endMs: 1200, confidence: 0.99, speaker: "A" }, { text: "reports", startMs: 1200, endMs: 1500, confidence: 0.99, speaker: "A" }, { text: "no", startMs: 1500, endMs: 1700, confidence: 0.99, speaker: "A" }, { text: "pain", startMs: 1700, endMs: 2000, confidence: 0.99, speaker: "A" }] }] }) }), readMedia: async () => Buffer.from("synthetic"), document: async t => [{ section: "S", text: "Reports no pain", certainty: "observed", limitation: "", sourceIds: [t.id], evidenceQuotes: ["Patient reports no pain"] }] };
 }
 
 test("Python contract and prompt match TypeScript source", () => {
@@ -31,7 +32,7 @@ test("image plus transcript retain distinct visual/context evidence and pending 
 });
 test("image only avoids transcription/documentation and marks missing context", async () => {
   const calls: ImageRequest[] = [], deps = dependencies(calls);
-  deps.document = deps.transcribe = async () => { throw Error("must not run"); };
+  deps.document = async () => { throw Error("must not run"); }; deps.transcriber = () => { throw Error("must not run"); };
   const result = await analyzeEncounter(encounter([image]), "run", deps);
   assert.equal(calls[0].transcript, null); assert.equal(result.warnings.length, 0);
   assert.match(result.findings[0].limitation, /No encounter transcript/);
@@ -45,7 +46,11 @@ test("audio-only transcription becomes its own stored source", async () => {
   const audio = { ...image, kind: "audio" as const, id: "audio-1", mime: "audio/webm" };
   const result = await analyzeEncounter(encounter([audio]), "run", dependencies());
   assert.equal(result.newSources[0].kind, "transcript");
+  assert.equal(result.newTranscripts.length, 1);
+  assert.equal(result.newTranscripts[0].settings.medicalMode, true);
   assert.equal(result.findings[0].evidence[0].sourceId, result.newSources[0].id);
+  assert.equal(result.findings[0].evidence[0].transcript?.speaker, "A");
+  assert.deepEqual([result.findings[0].evidence[0].transcript?.wordStart, result.findings[0].evidence[0].transcript?.wordEnd], [0, 3]);
 });
 test("multiple images are sent separately and cannot cross-attribute features", async () => {
   const calls: ImageRequest[] = [];
@@ -56,7 +61,7 @@ test("multiple images are sent separately and cannot cross-attribute features", 
   assert.throws(() => validateImageAnalysis(invalid, request()));
 });
 test("transcription failure still analyzes images with explicit partial-result warning", async () => {
-  const calls: ImageRequest[] = [], deps = dependencies(calls); deps.transcribe = async () => { throw Error("private provider details"); };
+  const calls: ImageRequest[] = [], deps = dependencies(calls); deps.transcriber = () => ({ id: "assemblyai", transcribe: async () => { throw Error("private provider details"); } });
   const result = await analyzeEncounter(encounter([image, { ...image, id: "audio", kind: "audio" }]), "run", deps);
   assert.equal(calls[0].transcript, null); assert.equal(result.newSources.length, 0);
   assert.match(result.warnings[0], /transcription failed/); assert.doesNotMatch(result.warnings.join(), /private provider/);

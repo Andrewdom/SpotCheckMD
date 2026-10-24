@@ -145,10 +145,10 @@ test("encounter edits cancel an owned run and revoke approval", () => {
 test("MedGemma transport validates model identity, structured data and timeout failures", async () => {
   process.env.MEDGEMMA_URL = "http://127.0.0.1:8000"; process.env.MEDGEMMA_API_KEY = "test-only-not-a-secret";
   delete process.env.OPENAI_API_KEY;
-  let sent: Record<string, unknown> = {};
-  const fetcher = (async (_url, init) => { sent = JSON.parse(String(init?.body)); return Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "test-revision", latencyMs: 5 }); }) as typeof fetch;
+  let sent: Record<string, unknown> = {}; let sentImage: unknown = null;
+  const fetcher = (async (_url, init) => { const form = init?.body as FormData; sent = JSON.parse(String(form.get("metadata"))); sentImage = form.get("image"); return Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "test-revision", latencyMs: 5 }); }) as typeof fetch;
   const result = await medgemmaProvider(fetcher).analyze(request());
-  assert.equal(result.model, "google/medgemma-1.5-4b-it"); assert.ok(sent.imageBase64); assert.deepEqual(sent.transcript, request().transcript);
+  assert.equal(result.model, "google/medgemma-1.5-4b-it"); assert.equal(sent.imageSourceId, request().image.id); assert.deepEqual(sent.transcript, request().transcript); assert.ok(sentImage && typeof sentImage === "object"); assert.equal((sentImage as Blob).type, "image/png");
   await assert.rejects(medgemmaProvider(async () => { throw new DOMException("timeout", "TimeoutError"); }).analyze(request()), /no fallback/i);
   await assert.rejects(medgemmaProvider(async () => new Response(JSON.stringify({ detail: "redacted" }), { status: 502, headers: { "X-SpotCheckMD-Failure-Stage": "schema validation" } })).analyze(request()), /during schema validation/);
   await assert.rejects(medgemmaProvider(async () => new Response(JSON.stringify({ detail: "redacted" }), { status: 502, headers: { "X-SpotCheckMD-Failure-Stage": "private invalid stage" } })).analyze(request()), /failed with status 502/);

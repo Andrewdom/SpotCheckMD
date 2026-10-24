@@ -59,8 +59,10 @@ export async function analyzeEncounter(snapshot: Encounter, runId: string, deps:
       for (const window of windows.length ? windows : [null]) {
         await deps.ensureCurrent?.();
         try {
-          const result = await provider.analyze({ image: { id: image.id, bytes, quality: image.quality || { status: "limited", reasons: ["Quality unavailable"], guidance: [] } }, transcript: window, context });
-          result.analysis = validateImageAnalysis(result.analysis, { image: { id: image.id, bytes, quality: image.quality! }, transcript: window, context });
+          const mime = image.mime === "image/png" ? "image/png" as const : "image/jpeg" as const;
+          const input = { image: { id: image.id, bytes, mime, width: image.width, height: image.height, quality: image.quality || { status: "limited" as const, reasons: ["Quality unavailable"], guidance: [] } }, transcript: window, context };
+          const result = await provider.analyze(input);
+          result.analysis = validateImageAnalysis(result.analysis, input);
           analyses.push({ ...result, runId, provider: provider.id, inputContext: structuredClone(context), inputTranscriptSourceId: window?.id || null });
           const ids = new Map<string, string>();
           for (const c of result.analysis.characteristics) {

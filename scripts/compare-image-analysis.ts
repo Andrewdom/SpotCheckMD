@@ -23,7 +23,7 @@ async function main() {
       const provider = variant === "gpt4o-context" ? openaiImageProvider() : medgemmaProvider();
       const started = performance.now(); const results: ImageResult[] = []; let status = "success";
       try {
-        for (const transcript of variant === "medgemma-image-only" ? [null] : windows) results.push(await provider.analyze({ image: { id: `${c.id}-image`, bytes: source.normalized, quality: source.quality }, transcript, context: c.context }));
+        for (const transcript of variant === "medgemma-image-only" ? [null] : windows) results.push(await provider.analyze({ image: { id: `${c.id}-image`, bytes: source.normalized, mime: source.mime, width: source.width, height: source.height, quality: source.quality }, transcript, context: c.context }));
       } catch { status = "failed"; }
       const record = { caseId: c.id, variant, status, order, promptVersion: PROMPT_VERSION, imageDigest: digest(source.normalized), transcriptDigest: digest(c.transcript), clinicalContext: c.context, sourceQuality: source.quality, results, latencyMs: performance.now() - started, costUsd: null, reviewed: false, expected: null, supported: null, unsupported: null, missed: null, corrected: null };
       await writeFile(path.join(output, `${c.id}-${variant}.json`), JSON.stringify(record, null, 2), { flag: "wx", mode: 0o600 });

@@ -31,7 +31,7 @@ docker run --detach \
   --publish 127.0.0.1:8321:8000 \
   --volume "$base/models:/models:ro" \
   --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=0700 \
+  --tmpfs /tmp:rw,noexec,nosuid,size=320m,uid=10001,gid=10001,mode=0700 \
   --security-opt no-new-privileges:true \
   --cap-drop ALL \
   --memory 24g \

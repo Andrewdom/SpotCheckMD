@@ -3,25 +3,46 @@ import { z } from "zod";
 import type { Quality } from "./domain";
 import { AppError } from "./store";
 
-export async function assessImage(bytes: Buffer): Promise<{ quality: Quality; width: number; height: number; normalized: Buffer }> {
-  const image = sharp(bytes, { limitInputPixels: 40_000_000, failOn: "error" });
-  const meta = await image.metadata();
-  if (!meta.width || !meta.height || !["jpeg", "png"].includes(meta.format || "")) throw new AppError(400, "Use a readable JPG or PNG photo.");
-  const { data, info } = await image.clone().rotate().resize({ width: 256, height: 256, fit: "inside" }).greyscale().raw().toBuffer({ resolveWithObject: true });
-  let mean = 0, gradient = 0, count = 0;
-  for (let y = 1; y < info.height - 1; y++) for (let x = 1; x < info.width - 1; x++) {
-    const i = y * info.width + x;
-    mean += data[i]; gradient += Math.abs(4 * data[i] - data[i - 1] - data[i + 1] - data[i - info.width] - data[i + info.width]); count++;
+const mib = 1024 * 1024;
+function configuredInteger(name: string, fallback: number, minimum: number, maximum: number) {
+  const raw = process.env[name];
+  const value = raw === undefined ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) throw new AppError(503, `${name} must be an integer between ${minimum} and ${maximum}.`);
+  return value;
+}
+export const imageUploadLimitBytes = () => configuredInteger("SPOTCHECK_IMAGE_UPLOAD_MAX_MB", 50, 1, 200) * mib;
+export const imagePixelLimit = () => configuredInteger("SPOTCHECK_IMAGE_MAX_PIXELS", 60_000_000, 1_000_000, 100_000_000);
+export const inferenceImageLimitBytes = () => configuredInteger("SPOTCHECK_INFERENCE_IMAGE_MAX_MB", 256, 10, 512) * mib;
+
+export async function assessImage(bytes: Buffer): Promise<{ quality: Quality; width: number; height: number; normalized: Buffer; preview: Buffer; mime: "image/png" }> {
+  try {
+    const image = sharp(bytes, { limitInputPixels: imagePixelLimit(), failOn: "error" });
+    const meta = await image.metadata();
+    if (!meta.width || !meta.height || !["jpeg", "png"].includes(meta.format || "")) throw new AppError(415, "Use a readable JPEG or PNG image. HEIC/HEIF is not enabled because decoder support is not consistent across development machines.");
+    // Decode once, apply EXIF orientation, strip metadata (Sharp's default), and
+    // encode losslessly without changing the oriented pixel dimensions.
+    const inference = await image.clone().rotate().png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer({ resolveWithObject: true });
+    if (inference.data.length > inferenceImageLimitBytes()) throw new AppError(413, `The lossless inference copy exceeds the configured ${Math.round(inferenceImageLimitBytes() / mib)} MB processing limit.`);
+    const qualityImage = sharp(inference.data, { limitInputPixels: imagePixelLimit(), failOn: "error" });
+    const { data, info } = await qualityImage.clone().resize({ width: 256, height: 256, fit: "inside" }).greyscale().raw().toBuffer({ resolveWithObject: true });
+    let mean = 0, gradient = 0, count = 0;
+    for (let y = 1; y < info.height - 1; y++) for (let x = 1; x < info.width - 1; x++) {
+      const i = y * info.width + x;
+      mean += data[i]; gradient += Math.abs(4 * data[i] - data[i - 1] - data[i + 1] - data[i - info.width] - data[i + info.width]); count++;
+    }
+    mean /= count || 1; gradient /= count || 1;
+    const reasons: string[] = [], guidance: string[] = [];
+    if (Math.min(inference.info.width, inference.info.height) < 640) { reasons.push("Low source resolution"); guidance.push("Retake closer with the subject in focus; preserve the full area."); }
+    if (mean < 42) { reasons.push("Image appears dark"); guidance.push("Add even light without using a harsh flash."); }
+    if (mean > 220) { reasons.push("Image appears overexposed"); guidance.push("Reduce glare and avoid direct flash."); }
+    if (gradient < 9) { reasons.push("Image may lack sharp detail"); guidance.push("Hold the phone steady, tap to focus, then retake."); }
+    const status: Quality["status"] = Math.min(inference.info.width, inference.info.height) < 400 || mean < 25 || mean > 240 ? "retake" : reasons.length ? "limited" : "usable";
+    const preview = await qualityImage.clone().resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+    return { width: inference.info.width, height: inference.info.height, normalized: inference.data, preview, mime: "image/png", quality: { status, reasons, guidance } };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError(400, "The image could not be decoded safely. Use a valid JPEG or PNG within the configured pixel limit.");
   }
-  mean /= count || 1; gradient /= count || 1;
-  const reasons: string[] = [], guidance: string[] = [];
-  if (Math.min(meta.width, meta.height) < 640) { reasons.push("Low source resolution"); guidance.push("Retake closer with the subject in focus; preserve the full area."); }
-  if (mean < 42) { reasons.push("Image appears dark"); guidance.push("Add even light without using a harsh flash."); }
-  if (mean > 220) { reasons.push("Image appears overexposed"); guidance.push("Reduce glare and avoid direct flash."); }
-  if (gradient < 9) { reasons.push("Image may lack sharp detail"); guidance.push("Hold the phone steady, tap to focus, then retake."); }
-  const status: Quality["status"] = Math.min(meta.width, meta.height) < 400 || mean < 25 || mean > 240 ? "retake" : reasons.length ? "limited" : "usable";
-  const normalized = await image.clone().rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85, mozjpeg: true }).toBuffer();
-  return { width: meta.width, height: meta.height, normalized, quality: { status, reasons, guidance } };
 }
 
 export type Suggested = { section: "S" | "O" | "A" | "P"; text: string; certainty: "observed" | "uncertain" | "not_assessable"; limitation: string; sourceIds: string[]; evidenceQuotes: string[] };

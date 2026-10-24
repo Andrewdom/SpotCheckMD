@@ -36,9 +36,13 @@ globalThis.fetch = async (url, init) => {
   }
   if (address === "http://127.0.0.1:8000/analyze") {
     providerRequests++;
-    const body = JSON.parse(String(init?.body));
+    const form = init?.body as FormData;
+    const body = JSON.parse(String(form.get("metadata")));
+    const imageFile = form.get("image") as unknown;
+    assert.ok(imageFile && typeof imageFile === "object");
+    assert.equal((imageFile as Blob).type, "image/png");
     if (entered) { entered(); entered = undefined; await new Promise<void>(resolve => { release = resolve; }); }
-    const result = analysis({ image: { id: body.imageSourceId, bytes: Buffer.from("mock"), quality: body.quality }, transcript: body.transcript, context: body.context });
+    const result = analysis({ image: { id: body.imageSourceId, bytes: Buffer.from("mock"), mime: "image/png", quality: body.quality }, transcript: body.transcript, context: body.context });
     return Response.json({ analysis: result, model: "google/medgemma-1.5-4b-it", modelRevision: "mock", latencyMs: 1 });
   }
   throw new Error("Unexpected network access blocked by test");
@@ -120,6 +124,23 @@ test("API: image-only defaults to MedGemma without an OpenAI key", async () => {
     if (previousOpenAI === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousOpenAI;
     if (previousProvider === undefined) delete process.env.IMAGE_ANALYSIS_PROVIDER; else process.env.IMAGE_ANALYSIS_PROVIDER = previousProvider;
   }
+});
+
+test("API: accepts a valid image larger than the former 10 MB limit", async () => {
+  const s = await session();
+  const jpeg = await sharp({ create: { width: 1800, height: 1700, channels: 3, background: { r: 100, g: 130, b: 160 } } }).jpeg().toBuffer();
+  const padded = Buffer.concat([jpeg, Buffer.alloc(11 * 1024 * 1024)]);
+  const form = new FormData();
+  form.set("encounterId", s.e.id); form.set("revision", String(s.e.revision)); form.set("kind", "image");
+  form.set("file", new Blob([new Uint8Array(padded)], { type: "image/jpeg" }), "large-synthetic.jpg");
+  const result = await s.action("upload", form);
+  assert.equal(result.status, 200); s.e = result.body.encounter;
+  const source = s.e.sources.find(value => value.kind === "image")!;
+  assert.equal(source.mime, "image/png");
+  assert.equal(source.originalMime, "image/jpeg");
+  assert.equal(source.imagePreparation, "oriented_lossless_png_metadata_stripped");
+  assert.ok(source.previewMediaId);
+  assert.deepEqual([source.width, source.height], [1800, 1700]);
 });
 
 test("API: missing MedGemma key reports MedGemma and never falls back", async () => {

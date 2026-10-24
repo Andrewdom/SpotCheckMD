@@ -24,6 +24,8 @@ docker logs --tail=100 spotcheckmd-medgemma
 
 `restart: unless-stopped` starts the service again when Docker starts after an Unraid reboot. The wrapper binds only to host loopback on port 8321. Tailscale Serve terminates private HTTPS and proxies to that port; do not publish port 8321 on LAN/WAN or add it to Cloudflare.
 
+The service accepts authenticated multipart JPEG/PNG requests up to 256 MB and 60 megapixels by default. Multipart parsing can spool to `/tmp`, so the container reserves a 320 MB private tmpfs. Override `MEDGEMMA_MAX_IMAGE_MB` (10–512) or `MEDGEMMA_MAX_IMAGE_PIXELS` (1–100 million) in `service.env` only after checking container memory and tmpfs capacity; keep the app-side limits at or below the service limits.
+
 Teammate Next.js configuration:
 
 ```dotenv

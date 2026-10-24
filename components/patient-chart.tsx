@@ -76,11 +76,11 @@ export function PatientChartPanel({ patientId, encounter, full = false, disabled
       {tab === "Medications & allergies" && patient?.allergyStatus === "unknown" && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Allergy history has not been verified. No allergy entries are available.</p>}
       {tab === "History" && patientId === "demo-002" && <p className="mb-4 text-xs text-slate-500">Family and surgical history: not documented.</p>}
       {tab === "Results" && !chart?.records.some(r => r.category === "lab") && <p className="mb-4 text-xs text-slate-500">Laboratory results: not documented.</p>}
-      <div className="grid gap-3 lg:grid-cols-2">{shown.map(record => {
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{shown.map(record => {
         const selected = items.find(item => item.id === record.id);
         const savedNote = chart?.notes.find(note => note.id === record.id);
         const currentNote = savedNote?.encounterId === encounter?.id;
-        return <article key={record.id} id={`chart-${record.id}`} className={`rounded-xl border p-4 ${focusNoteId === record.id ? "border-teal-600 bg-teal-50" : "border-slate-200"}`}>
+        return <article key={record.id} id={`chart-${record.id}`} className={`min-w-0 rounded-xl border p-4 ${focusNoteId === record.id ? "border-teal-600 bg-teal-50" : "border-slate-200"}`}>
           <div className="flex items-start justify-between gap-3"><h3 className="text-sm font-semibold">{record.title}</h3><span className="rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-600">{record.status}</span></div>
           <p className="mt-1 text-[11px] text-slate-500">{record.recordedAt.slice(0, 10)} · {record.source}</p>
           {record.category === "note" ? <details open={focusNoteId === record.id} className="mt-3 text-sm"><summary className="cursor-pointer font-medium text-teal-800">Read note</summary><p className="mt-3 whitespace-pre-wrap break-words leading-6 text-slate-600">{record.text}</p></details> : <p className="mt-3 text-sm leading-6 text-slate-600">{record.text}</p>}

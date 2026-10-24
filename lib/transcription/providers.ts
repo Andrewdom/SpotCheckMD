@@ -47,18 +47,23 @@ async function assemblyRequest(fetcher: typeof fetch, path: string, key: string,
 
 function assemblyUtterances(data: z.infer<typeof transcriptSchema>): TranscriptUtterance[] {
   const utterances = data.utterances || [];
-  if (!utterances.length && data.text?.trim()) return [{ id: "utterance-1", speaker: "UNKNOWN", startMs: 0, endMs: 0, text: data.text.trim(), words: [] }];
+  if (!utterances.length && data.text?.trim()) throw new AppError(502, "AssemblyAI did not return timestamped doctor-dictation segments.");
+  const speakers = new Set(utterances.flatMap(utterance => [
+    utterance.speaker,
+    ...utterance.words.map(word => word.speaker || utterance.speaker),
+  ]));
+  if (speakers.size > 1) throw new AppError(422, "Multiple voices were detected. This workflow supports doctor dictation only; record the doctor alone.");
   return utterances.map((utterance, index) => {
     if (utterance.end < utterance.start) throw new AppError(502, "AssemblyAI returned invalid transcript timing.");
     return {
       id: `utterance-${index + 1}`,
-      speaker: utterance.speaker,
+      speaker: "CLINICIAN",
       startMs: utterance.start,
       endMs: utterance.end,
       text: utterance.text,
       words: utterance.words.map(word => {
         if (word.end < word.start) throw new AppError(502, "AssemblyAI returned invalid word timing.");
-        return { text: word.text, startMs: word.start, endMs: word.end, confidence: word.confidence ?? null, speaker: word.speaker || utterance.speaker };
+        return { text: word.text, startMs: word.start, endMs: word.end, confidence: word.confidence ?? null, speaker: "CLINICIAN" };
       }),
     };
   });
@@ -78,7 +83,7 @@ export function assemblyAITranscriptionProvider(fetcher: typeof fetch = fetch): 
         speech_models: [model],
         domain: "medical-v1",
         speaker_labels: true,
-        speakers_expected: 2,
+        speakers_expected: 1,
         keyterms_prompt: request.keyterms,
       }),
     }));
@@ -118,7 +123,7 @@ export function openAITranscriptionProvider(): TranscriptionProvider {
       model: "gpt-transcribe",
       finalizedAt: new Date().toISOString(),
       settings: { medicalMode: false, speakerLabels: false, keyterms: [] },
-      utterances: [{ id: "utterance-1", speaker: "UNKNOWN", startMs: 0, endMs: 0, text, words: [] }],
+      utterances: [{ id: "utterance-1", speaker: "CLINICIAN", startMs: 0, endMs: 0, text, words: [] }],
       supersedesId: request.supersedesId,
     });
   } };

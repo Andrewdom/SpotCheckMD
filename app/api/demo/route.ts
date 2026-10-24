@@ -217,7 +217,12 @@ async function analyze(request: Request) {
       e.imageAnalyses = [...(e.imageAnalyses || []), ...result.analyses];
       e.analysisWarnings = result.warnings; e.warningsAcknowledged = false;
       e.analysis = result.findings.length || result.analyses.length ? "ready" : "failed";
-      e.analysisError = e.analysis === "failed" ? "No new findings were generated. Review analysis warnings or add a supported manual observation." : "";
+      const hasTranscript = e.sources.some(source => source.kind === "transcript");
+      const transcriptionFailed = result.warnings.some(warning => warning.startsWith("Audio transcription failed."));
+      e.analysisError = e.analysis !== "failed" ? ""
+        : hasTranscript ? "The finalized transcript is available, but SOAP suggestions were not generated. Check the OpenAI SOAP-extraction configuration or add a clinician observation."
+          : transcriptionFailed ? "The audio was saved, but transcription failed. Check the selected transcription provider and its server-side API key, then retry."
+            : "No new findings were generated. Review analysis warnings or add a supported manual observation.";
       e.activeAnalysis = undefined;
       e.model = [...new Set([...result.analyses.map(a => a.model), ...(e.transcripts || []).map(transcriptionModel), ...(result.findings.some(f => f.origin === "spoken") ? ["gpt-4o (transcript documentation)"] : [])].filter(Boolean))].join(" + ");
       e.promptVersion = PROMPT_VERSION;

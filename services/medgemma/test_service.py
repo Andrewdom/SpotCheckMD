@@ -72,6 +72,7 @@ def test_invalid_output_is_redacted(client, payload, variant):
     assert result.status_code == 502
     assert "private" not in result.text
     assert "no fallback" in result.text
+    assert "output validation failed" in result.text
 
 def test_request_and_media_validation_are_redacted(client, payload):
     c, _ = client
@@ -80,7 +81,8 @@ def test_request_and_media_validation_are_redacted(client, payload):
     assert result.status_code == 422 and "PRIVATE" not in result.text
     payload["context"]["specialty"] = "general"
     payload["imageBase64"] = "not an image"
-    assert c.post("/analyze", json=payload).status_code == 502
+    result = c.post("/analyze", json=payload)
+    assert result.status_code == 502 and "image decoding failed" in result.text
 
 def test_model_exception_has_no_details(client, payload):
     c, model = client
@@ -93,3 +95,11 @@ def test_characteristics_conflict_is_preserved(client, payload):
     result = c.post("/analyze", json=payload)
     assert result.status_code == 200
     assert len(result.json()["analysis"]["conflicts"]) == 1
+
+def test_runtime_provenance_is_preserved(client, payload):
+    c, model = client
+    model.runtime = {"engine": "llama.cpp", "engineRevision": "a" * 40, "converterRevision": "b" * 40,
+                     "quantization": "Q4_K_M", "modelSha256": "c" * 64, "projectorSha256": "d" * 64}
+    result = c.post("/analyze", json=payload)
+    assert result.status_code == 200
+    assert result.json()["runtime"] == model.runtime

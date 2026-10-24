@@ -4,5 +4,7 @@
 node_modules
 .next
 .venv
+.venv-*
+*.gguf
 **/__pycache__
 .pytest_cache

@@ -122,5 +122,9 @@ test("MedGemma transport validates model identity, structured data and timeout f
   assert.equal(result.model, "google/medgemma-1.5-4b-it"); assert.ok(sent.imageBase64); assert.deepEqual(sent.transcript, request().transcript);
   await assert.rejects(medgemmaProvider(async () => { throw new DOMException("timeout", "TimeoutError"); }).analyze(request()), /No fallback/);
   await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "different-model", modelRevision: "test", latencyMs: 1 })).analyze(request()), /No fallback/);
+  const runtime = { engine: "llama.cpp", engineRevision: "a".repeat(40), converterRevision: "b".repeat(40), quantization: "Q4_K_M", modelSha256: "c".repeat(64), projectorSha256: "d".repeat(64) };
+  const local = await medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime, latencyMs: 1 })).analyze(request());
+  assert.deepEqual(local.runtime, runtime);
+  await assert.rejects(medgemmaProvider(async () => Response.json({ analysis: analysis(), model: "google/medgemma-1.5-4b-it", modelRevision: "e".repeat(40), runtime: { ...runtime, quantization: "unknown" }, latencyMs: 1 })).analyze(request()), /No fallback/);
   process.env.IMAGE_ANALYSIS_PROVIDER = "typo"; assert.throws(configuredImageProvider, /Unknown/); delete process.env.IMAGE_ANALYSIS_PROVIDER;
 });

@@ -24,6 +24,8 @@ This path has not produced clinical results. Use the same authorized encounters 
 
 All arms use the same normalized image, quality flags, declared specialty/image type and confirmed clinician context. The image-only arm removes only the transcript. To test strictly image-only rather than this controlled transcript ablation, leave `anatomicalLocation` and `physicianContext` empty in every arm. The GPT-4o adapter uses the new common observation schema/prompt; it is not a byte-identical replay of the historical `visual-v1` prompt. Keep that distinction in reports. Existing transcript SOAP generation is excluded from visual-quality scoring.
 
+The MedGemma arms use the explicitly configured service backend. For the experimental native CPU backend, report Q4_K_M text quantization, F16 vision projection, source/converter/runtime revisions, and artifact hashes from the saved `runtime` metadata. Do not label those runs as full-precision Transformers inference or combine runtimes silently. The separate local synthetic-diagram verification is a technical check and provides no clinician-reviewed comparison metrics.
+
 Create a private manifest outside source control. The following is a **fictional schema example, not an evaluated encounter**:
 
 ```json

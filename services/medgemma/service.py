@@ -127,8 +127,21 @@ def create_app(generator=None):
         key = os.getenv("MEDGEMMA_API_KEY", "")
         if len(key) < 16:
             raise RuntimeError("Configure a shared MEDGEMMA_API_KEY of at least 16 characters")
-        app.state.generator = generator if generator is not None else MedGemma()
-        yield
+        if generator is not None:
+            app.state.generator = generator
+        elif os.getenv("MEDGEMMA_BACKEND", "transformers") == "transformers":
+            app.state.generator = MedGemma()
+        elif os.getenv("MEDGEMMA_BACKEND") == "llama_cpp":
+            from services.medgemma.local_runtime import LlamaCpp
+            app.state.generator = LlamaCpp(SCHEMA)
+        else:
+            raise RuntimeError("Choose transformers or llama_cpp explicitly; no fallback")
+        try:
+            yield
+        finally:
+            close = getattr(app.state.generator, "close", None)
+            if close:
+                close()
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -155,13 +168,15 @@ def create_app(generator=None):
 
     @app.get("/health")
     def health():
-        return {"status": "ready", "model": MODEL_ID}
+        return {"status": "ready", "model": MODEL_ID, "modelRevision": app.state.generator.revision,
+                "runtime": getattr(app.state.generator, "runtime", None)}
 
     @app.post("/analyze")
     def analyze(request: AnalysisRequest):
         if not lock.acquire(blocking=False):
             raise HTTPException(429, "Inference busy; retry explicitly")
         started = time.perf_counter()
+        stage = "image decoding"
         try:
             raw = base64.b64decode(request.imageBase64, validate=True)
             with Image.open(BytesIO(raw)) as original:
@@ -169,15 +184,21 @@ def create_app(generator=None):
                     raise ValueError("Unsupported image")
                 original.load()
                 image = original.convert("RGB")
+            stage = "generation"
             output = app.state.generator(image, make_prompt(request)).strip()
+            stage = "output validation"
             if output.startswith("```json\n") and output.endswith("```"):
                 output = output[8:-3].strip()
             if len(output) > 100000:
                 raise ValueError("Response too large")
             result = validate_result(json.loads(output), request)
-            return {"analysis": result, "model": MODEL_ID, "modelRevision": app.state.generator.revision, "latencyMs": (time.perf_counter() - started) * 1000}
+            response = {"analysis": result, "model": MODEL_ID, "modelRevision": app.state.generator.revision, "latencyMs": (time.perf_counter() - started) * 1000}
+            runtime = getattr(app.state.generator, "runtime", None)
+            if runtime is not None:
+                response["runtime"] = runtime
+            return response
         except Exception:
-            raise HTTPException(502, "MedGemma inference or output validation failed; no fallback was used") from None
+            raise HTTPException(502, f"MedGemma {stage} failed; no fallback was used") from None
         finally:
             lock.release()
     return app

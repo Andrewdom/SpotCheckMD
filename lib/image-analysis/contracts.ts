@@ -36,7 +36,12 @@ export type ImageAnalysis = z.infer<typeof imageAnalysisSchema>;
 export type TranscriptContext = { id: string; text: string; start: number; end: number };
 export type ImageInput = { id: string; bytes: Buffer; quality: Quality };
 export type ImageRequest = { image: ImageInput; transcript: TranscriptContext | null; context: ClinicalContext };
-export type ImageResult = { inputContext?: ClinicalContext; inputTranscriptSourceId?: string | null; analysis: ImageAnalysis; model: string; modelRevision: string; latencyMs: number; contextRange: { start: number; end: number } | null };
+export const imageRuntimeSchema = z.object({
+  engine: z.literal("llama.cpp"), engineRevision: z.string().regex(/^[0-9a-f]{40}$/),
+  converterRevision: z.string().regex(/^[0-9a-f]{40}$/), quantization: z.literal("Q4_K_M"),
+  modelSha256: z.string().regex(/^[0-9a-f]{64}$/), projectorSha256: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict();
+export type ImageResult = { runtime?: z.infer<typeof imageRuntimeSchema>; inputContext?: ClinicalContext; inputTranscriptSourceId?: string | null; analysis: ImageAnalysis; model: string; modelRevision: string; latencyMs: number; contextRange: { start: number; end: number } | null };
 export type ImageProvider = { id: string; analyze(input: ImageRequest): Promise<ImageResult> };
 export const PROMPT_VERSION = "contextual-image-v1";
 

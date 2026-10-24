@@ -30,6 +30,8 @@ export function ImageAnalysisContext({ encounter, onAcknowledge, disabled }: { e
       return <details key={`${result.runId}-${index}`} className="rounded border p-3"><summary className="cursor-pointer text-sm font-semibold">{source?.label || a.imageSourceId} · {result.provider} · {a.imageType}</summary>
         {source?.mediaId && <a href={`#source-${source.id}`}><img src={`/api/media/${source.mediaId}`} alt={`Analyzed ${source.label}`} className="mt-3 max-h-36 rounded object-contain" /></a>}
         <p className="mt-2 text-xs">Model: {result.model} · {Math.round(result.latencyMs)} ms · Run {result.runId.slice(0, 8)}</p>
+        {result.runtime && <p className="mt-2 text-xs text-amber-800">Experimental local runtime: {result.runtime.engine} · {result.runtime.quantization} quantization. Performance may differ from the original weights; verify every observation.</p>}
+        <p className="mt-2 break-all text-xs text-slate-500">Model revision: {result.modelRevision}{result.runtime && ` · Runtime revision: ${result.runtime.engineRevision}`}</p>
         <p className="mt-2 text-xs">Anatomical context: {a.anatomicalRegion.value || "Unknown"} ({a.anatomicalRegion.source}); {a.anatomicalRegion.visuallyConfirmed ? "model claims visible — verify" : "not visually confirmed"}</p>
         {a.anatomicalRegion.transcriptQuote && <blockquote className="mt-2 text-xs">“{a.anatomicalRegion.transcriptQuote}”</blockquote>}
         {result.contextRange && <p className="mt-2 text-xs text-slate-500">Transcript character range {result.contextRange.start}–{result.contextRange.end}. Ranges are text offsets, not audio timestamps.</p>}

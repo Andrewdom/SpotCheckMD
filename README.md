@@ -13,6 +13,8 @@ npm run dev
 
 Open http://localhost:3000. An existing ignored `.env.local` can contain `OPENAI_API_KEY` for analysis; never commit, upload, or paste the key. Capture and review UI work without live AI. The default image provider remains GPT-4o. Set `IMAGE_ANALYSIS_PROVIDER=medgemma` to use the separate official MedGemma 1.5 4B service with encounter-transcript context; provider failures never trigger a model fallback. The server retains `gpt-transcribe` for audio and GPT-4o for transcript documentation. MedGemma image-only analysis works without an OpenAI key. See [MedGemma setup and limitations](docs/medgemma.md). Audio recording requires localhost or HTTPS and browser permission. Mobile `capture="environment"` behavior varies by browser.
 
+Intel Macs can explicitly select the [experimental quantized CPU backend](docs/medgemma.md#experimental-intel-mac--native-cpu-backend). It converts authorized official weights locally and records conversion/runtime provenance. This is a separate runtime from the default Transformers service; quantization may change output quality and does not establish clinical validity.
+
 ## Demo journey
 
 1. Choose one of two fictional patient profiles. Confirm the patient and all-party recording/processing consent.

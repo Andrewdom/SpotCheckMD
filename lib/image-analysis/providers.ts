@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AppError } from "../store";
-import { imageAnalysisSchema, validateImageAnalysis, type ImageProvider, type ImageRequest } from "./contracts";
+import { imageAnalysisSchema, imageRuntimeSchema, validateImageAnalysis, type ImageProvider, type ImageRequest } from "./contracts";
 import { imagePrompt } from "./prompt";
 import { api, responseText } from "../analysis";
 
@@ -22,7 +22,7 @@ export function medgemmaProvider(fetcher: typeof fetch = fetch): ImageProvider {
       if (!response.ok) throw new AppError(502, `MedGemma service returned ${response.status}; no fallback was used.`);
       const raw = await response.text();
       if (raw.length > 200000) throw new Error("Oversized response");
-      const envelope = z.object({ analysis: z.unknown(), model: z.literal("google/medgemma-1.5-4b-it"), modelRevision: z.string().min(1), latencyMs: z.number().finite().nonnegative() }).strict().parse(JSON.parse(raw));
+      const envelope = z.object({ analysis: z.unknown(), model: z.literal("google/medgemma-1.5-4b-it"), modelRevision: z.string().min(1), runtime: imageRuntimeSchema.optional(), latencyMs: z.number().finite().nonnegative() }).strict().parse(JSON.parse(raw));
       return { ...envelope, analysis: validateImageAnalysis(envelope.analysis, input), contextRange: input.transcript ? { start: input.transcript.start, end: input.transcript.end } : null };
     } catch (error) {
       if (error instanceof AppError) throw error;

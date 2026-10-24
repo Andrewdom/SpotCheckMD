@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { Activity, ArrowLeft, Camera, Check, ChevronRight, Clipboard, FileText, ImagePlus, Link2, LoaderCircle, Mic, ScanLine, ShieldCheck, Sparkles, Square, TriangleAlert, Upload, ZoomIn } from "lucide-react";
+import { Activity, ArrowLeft, Camera, Check, ChevronRight, Clipboard, FileText, ImagePlus, Link2, LoaderCircle, Mic, ScanLine, ShieldCheck, Sparkles, Square, TriangleAlert, Upload, X, ZoomIn } from "lucide-react";
 import { PATIENTS, composeNote, reviewBlockers, sectionLabels, type Encounter, type Finding } from "@/lib/domain";
 
 import { ClinicalContextEditor, ImageAnalysisContext } from "@/components/clinical-context";
@@ -26,7 +26,30 @@ export default function Dashboard() {
   const [message, setMessage] = useState("");
   const [pairUrl, setPairUrl] = useState("");
   const [qr, setQr] = useState("");
-  const [zoom, setZoom] = useState(1);
+  const [photoZooms, setPhotoZooms] = useState<Record<string, number>>({});
+  const [photoPans, setPhotoPans] = useState<Record<string, { x: number; y: number }>>({});
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
+  const photoGalleryRef = useRef<HTMLDivElement>(null);
+  const photoDrag = useRef<{
+    sourceId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const photoPointers = useRef(new Map<number, {
+    sourceId: string;
+    pointerType: string;
+    x: number;
+    y: number;
+  }>());
+  const photoPinch = useRef<{
+    sourceId: string;
+    pointerIds: [number, number];
+    startDistance: number;
+    startZoom: number;
+  } | null>(null);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [clinician, setClinician] = useState("");
@@ -40,6 +63,52 @@ export default function Dashboard() {
   const patient = PATIENTS.find(p => p.id === current?.patientId);
   const blockers = current ? reviewBlockers(current) : [];
   const note = current ? composeNote(current, Boolean(current.approval)) : "";
+  const newestPhotoId = current?.sources
+    .filter(source => source.kind === "image")
+    .reduce(
+      (newest, source) =>
+        !newest || source.createdAt > newest.createdAt ? source : newest,
+      null as Encounter["sources"][number] | null,
+    )?.id ?? null;
+  const activePhotoId = selectedPhotoId ?? newestPhotoId;
+  const activePhotoZoom = activePhotoId ? photoZooms[activePhotoId] ?? 1 : 1;
+
+  useEffect(() => {
+    const gallery = photoGalleryRef.current;
+    if (!gallery) return;
+
+    function handleWheel(event: WheelEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      const preview = target.closest<HTMLElement>("[data-photo-id]");
+      const sourceId = preview?.dataset.photoId;
+      const galleryElement = photoGalleryRef.current;
+      if (!preview || !sourceId || !galleryElement || !galleryElement.contains(preview)) return;
+
+      event.preventDefault();
+      setSelectedPhotoId(sourceId);
+
+      const currentZoom = photoZooms[sourceId] ?? 1;
+      const nextZoom = Math.max(
+        1,
+        Math.min(3, currentZoom * Math.exp(-event.deltaY * 0.0015)),
+      );
+      setPhotoZooms(current => ({
+        ...current,
+        [sourceId]: nextZoom,
+      }));
+      if (nextZoom === 1) {
+        setPhotoPans(current => ({
+          ...current,
+          [sourceId]: { x: 0, y: 0 },
+        }));
+      }
+    }
+
+    gallery.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+    return () => gallery.removeEventListener("wheel", handleWheel, true);
+  }, [photoZooms]);
 
   function update(e: Encounter) {
     active.current = e;
@@ -290,18 +359,195 @@ export default function Dashboard() {
               </div>
             )}
 
-            <div className="mt-5 space-y-4">
+            <div ref={photoGalleryRef} className="mt-5 space-y-4">
               {current.sources
                 .filter(source => source.kind === "image")
                 .map(source => (
-                  <article key={source.id} className="rounded-xl border border-slate-200 p-3">
-                    <div className="h-44 overflow-hidden rounded-lg bg-slate-100">
-                      <img
-                        alt={source.label + ", source " + source.id.slice(0, 8)}
-                        src={"/api/media/" + source.mediaId}
-                        style={{ transform: "scale(" + zoom + ")" }}
-                        className="h-full w-full object-contain"
-                      />
+                  <article
+                    key={source.id}
+                    className={
+                      "rounded-xl border p-3 transition " +
+                      (activePhotoId === source.id
+                        ? "border-teal-600 ring-2 ring-teal-100"
+                        : "border-slate-200")
+                    }
+                  >
+                    <div className="relative overflow-hidden rounded-lg bg-slate-100">
+                      <button
+                        type="button"
+                        data-photo-id={source.id}
+                        aria-label={"Select " + source.label + " for zoom"}
+                        aria-pressed={activePhotoId === source.id}
+                        onClick={() => setSelectedPhotoId(source.id)}
+                        onPointerDown={event => {
+                          event.preventDefault();
+                          setSelectedPhotoId(source.id);
+                          event.currentTarget.setPointerCapture(event.pointerId);
+
+                          photoPointers.current.set(event.pointerId, {
+                            sourceId: source.id,
+                            pointerType: event.pointerType,
+                            x: event.clientX,
+                            y: event.clientY,
+                          });
+
+                          const touchPointers = Array.from(photoPointers.current.entries())
+                            .filter(([, pointer]) =>
+                              pointer.sourceId === source.id && pointer.pointerType === "touch",
+                            )
+                            .slice(-2);
+
+                          if (touchPointers.length === 2) {
+                            const [[firstId, first], [secondId, second]] = touchPointers;
+                            const startDistance = Math.hypot(
+                              second.x - first.x,
+                              second.y - first.y,
+                            );
+                            if (startDistance > 0) {
+                              photoDrag.current = null;
+                              photoPinch.current = {
+                                sourceId: source.id,
+                                pointerIds: [firstId, secondId],
+                                startDistance,
+                                startZoom: photoZooms[source.id] ?? 1,
+                              };
+                            }
+                            return;
+                          }
+
+                          const imageZoom = photoZooms[source.id] ?? 1;
+                          if (imageZoom <= 1) return;
+
+                          const pan = photoPans[source.id] ?? { x: 0, y: 0 };
+                          photoDrag.current = {
+                            sourceId: source.id,
+                            pointerId: event.pointerId,
+                            startX: event.clientX,
+                            startY: event.clientY,
+                            originX: pan.x,
+                            originY: pan.y,
+                          };
+                        }}
+                        onPointerMove={event => {
+                          const pointer = photoPointers.current.get(event.pointerId);
+                          if (pointer?.sourceId === source.id) {
+                            photoPointers.current.set(event.pointerId, {
+                              ...pointer,
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }
+
+                          const pinch = photoPinch.current;
+                          if (pinch?.sourceId === source.id) {
+                            const first = photoPointers.current.get(pinch.pointerIds[0]);
+                            const second = photoPointers.current.get(pinch.pointerIds[1]);
+                            if (!first || !second) return;
+
+                            event.preventDefault();
+                            const distance = Math.hypot(second.x - first.x, second.y - first.y);
+                            const nextZoom = Math.max(
+                              1,
+                              Math.min(3, pinch.startZoom * (distance / pinch.startDistance)),
+                            );
+                            setPhotoZooms(current => ({
+                              ...current,
+                              [source.id]: nextZoom,
+                            }));
+                            if (nextZoom === 1) {
+                              setPhotoPans(current => ({
+                                ...current,
+                                [source.id]: { x: 0, y: 0 },
+                              }));
+                            }
+                            return;
+                          }
+
+                          const drag = photoDrag.current;
+                          if (!drag || drag.sourceId !== source.id || drag.pointerId !== event.pointerId) return;
+
+                          event.preventDefault();
+                          const frame = event.currentTarget.getBoundingClientRect();
+                          const image = event.currentTarget.querySelector("img");
+                          const imageWidth = image?.naturalWidth || frame.width;
+                          const imageHeight = image?.naturalHeight || frame.height;
+                          const fitScale = Math.min(frame.width / imageWidth, frame.height / imageHeight);
+                          const imageZoom = photoZooms[source.id] ?? 1;
+                          const maxX = (imageWidth * fitScale * (imageZoom - 1)) / 2;
+                          const maxY = (imageHeight * fitScale * (imageZoom - 1)) / 2;
+                          const x = Math.max(-maxX, Math.min(maxX, drag.originX + event.clientX - drag.startX));
+                          const y = Math.max(-maxY, Math.min(maxY, drag.originY + event.clientY - drag.startY));
+
+                          setPhotoPans(current => ({
+                            ...current,
+                            [source.id]: { x, y },
+                          }));
+                        }}
+                        onPointerUp={event => {
+                          photoPointers.current.delete(event.pointerId);
+                          photoDrag.current = null;
+                          if (photoPinch.current?.pointerIds.includes(event.pointerId)) {
+                            photoPinch.current = null;
+                          }
+                        }}
+                        onPointerCancel={event => {
+                          photoPointers.current.delete(event.pointerId);
+                          photoDrag.current = null;
+                          photoPinch.current = null;
+                        }}
+                        onLostPointerCapture={event => {
+                          photoPointers.current.delete(event.pointerId);
+                          photoDrag.current = null;
+                          if (photoPinch.current?.pointerIds.includes(event.pointerId)) {
+                            photoPinch.current = null;
+                          }
+                        }}
+                        className={
+                          "block h-44 w-full touch-none select-none " +
+                          ((photoZooms[source.id] ?? 1) > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in")
+                        }
+                      >
+                        <img
+                          draggable={false}
+                          onDragStart={event => event.preventDefault()}
+                          alt={source.label + ", source " + source.id.slice(0, 8)}
+                          src={"/api/media/" + source.mediaId}
+                          style={{
+                            transform:
+                              "translate(" +
+                              (photoPans[source.id]?.x ?? 0) +
+                              "px, " +
+                              (photoPans[source.id]?.y ?? 0) +
+                              "px) scale(" +
+                              (photoZooms[source.id] ?? 1) +
+                              ")",
+                          }}
+                          className="h-full w-full object-contain transition-transform"
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={"Remove " + source.label}
+                        title="Remove image"
+                        disabled={busy}
+                        onClick={() => {
+                          if (selectedPhotoId === source.id) setSelectedPhotoId(null);
+                          setPhotoZooms(current => {
+                            const next = { ...current };
+                            delete next[source.id];
+                            return next;
+                          });
+                          setPhotoPans(current => {
+                            const next = { ...current };
+                            delete next[source.id];
+                            return next;
+                          });
+                          void act("remove-image", { sourceId: source.id });
+                        }}
+                        className="absolute right-2 top-2 z-10 rounded-full bg-black/70 p-1.5 text-white shadow transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <X size={15} />
+                      </button>
                     </div>
                     <p className="mt-3 text-sm font-semibold">
                       {source.label}
@@ -336,7 +582,13 @@ export default function Dashboard() {
             </div>
 
             {current.sources.some(source => source.kind === "image") && (
-              <label className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+              <div className="mt-4 space-y-2">
+                <p className="text-xs font-medium text-teal-800">
+                  {selectedPhotoId
+                    ? "Selected photo only — pinch or scroll to zoom, then drag to inspect."
+                    : "Newest photo selected by default. Pinch or scroll to zoom, then drag to inspect."}
+                </p>
+                <label className="flex items-center gap-2 text-xs text-slate-500">
                 <ZoomIn size={15} />
                 Preview zoom
                 <input
@@ -345,12 +597,26 @@ export default function Dashboard() {
                   min="1"
                   max="3"
                   step="0.1"
-                  value={zoom}
-                  onChange={event => setZoom(Number(event.target.value))}
+                  value={activePhotoZoom}
+                  onChange={event => {
+                    if (!activePhotoId) return;
+                    const nextZoom = Number(event.target.value);
+                    setPhotoZooms(current => ({
+                      ...current,
+                      [activePhotoId]: nextZoom,
+                    }));
+                    if (nextZoom === 1) {
+                      setPhotoPans(current => ({
+                        ...current,
+                        [activePhotoId]: { x: 0, y: 0 },
+                      }));
+                    }
+                  }}
                   className="flex-1 accent-teal-700"
                 />
-                {zoom}×
-              </label>
+                {activePhotoZoom.toFixed(2)}×
+                </label>
+              </div>
             )}
           </section>
           <div className="lg:col-span-2"><div className={`${card} flex flex-wrap items-center justify-between gap-4 p-5`}><div><p className="font-semibold">Ready to propose findings?</p><p className="mt-1 text-xs text-slate-500">AI suggestions stay pending until a clinician reviews each one. Retake warnings remain visible.</p></div><button disabled={busy || recording || !current.consent || !current.patientConfirmed || !current.sources.some(s => s.kind === "image" || s.kind === "audio")} onClick={() => void act("analyze", {}, "review")} className={`${button} bg-teal-800 text-white`}>{busy ? <LoaderCircle className="animate-spin" size={16} /> : <Sparkles size={16} />} {busy ? "Processing…" : "Analyze & review"}</button></div></div>

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { assessImage, suggest, transcribe } from "@/lib/analysis";
@@ -66,6 +66,44 @@ export async function POST(request: Request) {
       });
       return Response.json({ encounter });
     }
+    if (action === "remove-image") {
+      const result = await transaction(db => {
+        auth(db, request, encounterId);
+        const encounter = db.encounters.find(item => item.id === encounterId)!;
+        checkRevision(encounter, body.revision);
+
+        const sourceIndex = encounter.sources.findIndex(
+          source => source.id === body.sourceId && source.kind === "image",
+        );
+        if (sourceIndex < 0) throw new AppError(404, "Image not found.");
+
+        const [source] = encounter.sources.splice(sourceIndex, 1);
+        const removedFindingIds = new Set(
+          encounter.findings
+            .filter(finding => finding.evidence.some(evidence => evidence.sourceId === source.id))
+            .map(finding => finding.id),
+        );
+        encounter.findings = encounter.findings.filter(finding => !removedFindingIds.has(finding.id));
+        encounter.conflicts = encounter.conflicts.filter(
+          conflict => conflict.findingIds.every(id => !removedFindingIds.has(id)),
+        );
+        encounter.imageAnalyses = [];
+        encounter.analysisWarnings = [];
+        encounter.warningsAcknowledged = false;
+        encounter.analysis = "none";
+        encounter.analysisError = "";
+        encounter.activeAnalysis = undefined;
+        changed(encounter, "image removed");
+
+        return { encounter: safe(encounter), mediaId: source.mediaId };
+      });
+
+      if (result.mediaId) {
+        await unlink(mediaPath(result.mediaId)).catch(() => {});
+      }
+      return Response.json({ encounter: result.encounter });
+    }
+
     const encounter = await transaction(db => {
       auth(db, request, encounterId);
       const e = db.encounters.find(v => v.id === encounterId)!;

@@ -121,6 +121,8 @@ Set these variables in the service environment, alongside `MEDGEMMA_API_KEY`:
 
 Start the wrapper with the existing Uvicorn command using `.venv-local/bin/uvicorn`. If you store local configuration in an ignored, permission-restricted `.env.local`, add `--env-file .env.local`; the local requirements include dotenv support. Never commit or display that file. The Next.js process needs `IMAGE_ANALYSIS_PROVIDER=medgemma`, `MEDGEMMA_URL=http://127.0.0.1:8000`, the same shared key, and `MEDGEMMA_TIMEOUT_MS=600000`. Use a fresh `AURA_DATA_DIR` for testing. Image-only tests do not need an OpenAI key.
 
+The native runtime accepts verified `Q4_K_M` or `Q8_0` manifests. GPU use remains explicit through `MEDGEMMA_GPU_LAYERS` (0–34), `MEDGEMMA_MM_PROJ_OFFLOAD`, and `MEDGEMMA_KV_OFFLOAD`; `MEDGEMMA_THREADS` is bounded to 1–64. Defaults preserve the CPU configuration. Small GPUs should use hybrid inference and keep the KV cache in system memory rather than silently changing quantization.
+
 With the service running, this command sends two real requests through the TypeScript adapter: a generated non-patient geometric diagram alone and the same diagram with explicitly fictional transcript context. It checks response/evidence contracts, writes private outputs, and reports failures without grading clinical quality:
 
 ```sh
@@ -183,6 +185,8 @@ docker run --rm --gpus all -p 127.0.0.1:8000:8000 \
 Use a GPU-capable Docker host with the NVIDIA container runtime. Supply secrets at runtime, and use a writable persistent private cache when appropriate; do not bake credentials or model weights into a public image. For a remote GPU VM/container, put the wrapper behind TLS and network access controls; preserve bearer authorization, disable request-body/access logging, set proxy body limits to at most 15 MB, and allow the configured inference timeout. Configure the Next.js server's `MEDGEMMA_URL` to that HTTPS base URL. The wrapper bounds request size, returns redacted validation errors, rejects concurrent inference with 429, and does not persist inputs. It does not establish a complete privacy or retention policy for hosting infrastructure.
 
 A raw Vertex AI/Model Garden endpoint has a different request/authentication contract and is **not** a drop-in URL for this adapter. Deploy this wrapper or implement and test a separate endpoint adapter. Docker/GPU/hosted deployment has not been executed in the development checks below.
+
+The dedicated Unraid Q8/CUDA deployment is documented in [`deploy/unraid/README.md`](../deploy/unraid/README.md). Its host port is loopback-only and intended to sit behind private Tailscale Serve HTTPS. Teammate SpotCheckMD instances set `MEDGEMMA_URL` to the server's `https://...ts.net` URL and retain the shared bearer key in server-side configuration.
 
 Use a long-running Node server for the app. One encounter can make several sequential calls; short serverless request limits may terminate it. The service caps generated tokens and requests a generation time limit; GPU work may finish after a client disconnect. There is no durable job queue or instant remote cancellation. Encounter run ownership, revision checks before each external call, and commit checks prevent stale output from replacing newer edits. Expired runs can be retried after 30 minutes; an old worker cannot complete a newer run.
 

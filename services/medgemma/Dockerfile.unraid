@@ -1,0 +1,27 @@
+# Pinned Linux/CUDA llama.cpp runtime for the Unraid MedGemma service.
+ARG CUDA_VERSION=12.4.1
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS llama-build
+ARG LLAMA_CPP_REVISION=edc353842c1be9b4ebc27460a1da4526a026d3a9
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates cmake g++ git make && rm -rf /var/lib/apt/lists/*
+RUN git clone --filter=blob:none https://github.com/ggml-org/llama.cpp.git /src/llama.cpp \
+    && git -C /src/llama.cpp checkout "${LLAMA_CPP_REVISION}" \
+    && cmake -S /src/llama.cpp -B /src/llama.cpp/build \
+      -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61 -DBUILD_SHARED_LIBS=OFF \
+      -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON \
+    && cmake --build /src/llama.cpp/build --target llama-server --parallel 6
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates libgomp1 python3 python3-pip && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 inference
+WORKDIR /app
+COPY services/medgemma/requirements-llama.txt /app/requirements.txt
+RUN python3 -m pip install --no-cache-dir -r /app/requirements.txt
+COPY --from=llama-build /src/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
+COPY contracts /app/contracts
+COPY services/medgemma/service.py services/medgemma/local_runtime.py /app/services/medgemma/
+ENV PYTHONUNBUFFERED=1 HOME=/home/inference
+USER inference
+EXPOSE 8000
+CMD ["python3", "-m", "uvicorn", "services.medgemma.service:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

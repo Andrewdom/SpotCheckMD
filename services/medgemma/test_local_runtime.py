@@ -58,6 +58,8 @@ def test_owned_loopback_runtime_and_cleanup(setup):
     assert keyfile.stat().st_mode & 0o777 == 0o600
     assert "HF_TOKEN" not in state.child_env
     assert state.command[state.command.index("--host") + 1] == "127.0.0.1"
+    assert state.command[state.command.index("--n-gpu-layers") + 1] == "0"
+    assert "--no-mmproj-offload" in state.command
     assert "--no-context-shift" in state.command and "--log-disable" in state.command
     assert state.client_options["trust_env"] is False
     assert state.client_options["follow_redirects"] is False
@@ -72,6 +74,26 @@ def test_owned_loopback_runtime_and_cleanup(setup):
     assert state.payload["cache_prompt"] is False
     runtime.close()
     assert state.terminated and state.client_closed and not keyfile.exists()
+
+def test_explicit_hybrid_gpu_configuration(setup, monkeypatch):
+    _, manifest, state = setup
+    manifest["quantization"] = "Q8_0"
+    setup[0].write_text(json.dumps(manifest))
+    monkeypatch.setenv("MEDGEMMA_GPU_LAYERS", "20")
+    monkeypatch.setenv("MEDGEMMA_THREADS", "10")
+    monkeypatch.setenv("MEDGEMMA_MM_PROJ_OFFLOAD", "true")
+    monkeypatch.setenv("MEDGEMMA_KV_OFFLOAD", "false")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/synthetic/cuda")
+    runtime = local.LlamaCpp(SCHEMA)
+    try:
+        assert state.command[state.command.index("--n-gpu-layers") + 1] == "20"
+        assert state.command[state.command.index("--threads") + 1] == "10"
+        assert "--no-mmproj-offload" not in state.command
+        assert "--no-kv-offload" in state.command
+        assert state.child_env["LD_LIBRARY_PATH"] == "/synthetic/cuda"
+        assert runtime.runtime["quantization"] == "Q8_0"
+    finally:
+        runtime.close()
 
 @pytest.mark.parametrize("change", ["tampered_file", "wrong_model", "unknown_quantization", "invalid_revision"])
 def test_invalid_manifest_never_launches(setup, change):

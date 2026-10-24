@@ -8,16 +8,17 @@ Private server paths:
 - `/mnt/user/appdata/spotcheckmd-medgemma/config/service.env`: API key, mode `0600`
 - `/mnt/user/appdata/spotcheckmd-medgemma/repository`: deployment checkout
 
-Build and lifecycle commands, run from the checkout:
+The target Unraid 7.1.4 host has Docker without the Compose plugin. Build and start it with the checked-in scripts:
 
 ```sh
-docker compose -f deploy/unraid/compose.yaml build
-docker compose -f deploy/unraid/compose.yaml up -d
-docker compose -f deploy/unraid/compose.yaml stop
-docker compose -f deploy/unraid/compose.yaml start
-docker compose -f deploy/unraid/compose.yaml down
-docker compose -f deploy/unraid/compose.yaml logs --tail=100 medgemma
+deploy/unraid/build.sh
+deploy/unraid/run.sh
+deploy/unraid/stop.sh
+deploy/unraid/run.sh  # starts the existing stopped container
+docker logs --tail=100 spotcheckmd-medgemma
 ```
+
+`compose.yaml` documents the equivalent configuration for hosts with Docker Compose. Do not run both forms on the same host. To recreate the container after an image/configuration change, stop it, explicitly remove only `spotcheckmd-medgemma`, and rerun `run.sh`.
 
 `restart: unless-stopped` starts the service again when Docker starts after an Unraid reboot. The wrapper binds only to host loopback on port 8321. Tailscale Serve terminates private HTTPS and proxies to that port; do not publish port 8321 on LAN/WAN or add it to Cloudflare.
 

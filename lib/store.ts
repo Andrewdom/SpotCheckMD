@@ -2,11 +2,12 @@ import { randomBytes, createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import type { Encounter } from "./domain";
+import type { StoredChart } from "./ehr/types";
 
 export const dataRoot = process.env.AURA_DATA_DIR || path.join(process.cwd(), ".aura-data");
 type Session = { id: string; owner: string; encounterId: string | null; expires: number };
 type Pairing = { hash: string; encounterId: string; expires: number; used: boolean };
-type Database = { encounters: Encounter[]; sessions: Session[]; pairings: Pairing[] };
+type Database = { encounters: Encounter[]; sessions: Session[]; pairings: Pairing[]; ehrCharts?: StoredChart[] };
 const globalStore = globalThis as unknown as { auraLock?: Promise<unknown> };
 export const uid = () => randomBytes(16).toString("hex");
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");

@@ -121,6 +121,8 @@ Set these variables in the service environment, alongside `MEDGEMMA_API_KEY`:
 
 Start the wrapper with the existing Uvicorn command using `.venv-local/bin/uvicorn`. If you store local configuration in an ignored, permission-restricted `.env.local`, add `--env-file .env.local`; the local requirements include dotenv support. Never commit or display that file. The Next.js process needs `IMAGE_ANALYSIS_PROVIDER=medgemma`, `MEDGEMMA_URL=http://127.0.0.1:8000`, the same shared key, and `MEDGEMMA_TIMEOUT_MS=600000`. Use a fresh `AURA_DATA_DIR` for testing. Image-only tests do not need an OpenAI key.
 
+The native runtime accepts verified `Q4_K_M` or `Q8_0` manifests. GPU use remains explicit through `MEDGEMMA_GPU_LAYERS` (0–34), `MEDGEMMA_MM_PROJ_OFFLOAD`, and `MEDGEMMA_KV_OFFLOAD`; `MEDGEMMA_THREADS` is bounded to 1–64. Defaults preserve the CPU configuration. Small GPUs should use hybrid inference and keep the KV cache in system memory rather than silently changing quantization.
+
 With the service running, this command sends two real requests through the TypeScript adapter: a generated non-patient geometric diagram alone and the same diagram with explicitly fictional transcript context. It checks response/evidence contracts, writes private outputs, and reports failures without grading clinical quality:
 
 ```sh
@@ -129,7 +131,7 @@ node --env-file=.env.local --import tsx scripts/verify-local-medgemma.ts /privat
 
 ## Private SCIN integration verification
 
-[SCIN](https://github.com/google-research-datasets/scin) contains real-person dermatology photographs and self-reported metadata. It is governed by the [SCIN Data Use License](https://github.com/google-research-datasets/scin/blob/main/LICENSE), which includes attribution requirements and prohibits re-identification. Images may be sensitive or graphic. Keep all downloaded images, metadata, generated manifests and model reports outside the repository. This workflow permits only the local MedGemma service; do not send SCIN material to OpenAI or another external provider.
+[SCIN](https://github.com/google-research-datasets/scin) contains real-person dermatology photographs and self-reported metadata. It is governed by the [SCIN Data Use License](https://github.com/google-research-datasets/scin/blob/main/LICENSE), which includes attribution requirements and prohibits re-identification. Images may be sensitive or graphic. Keep all downloaded images, metadata, generated manifests and model reports outside the repository. This workflow permits only loopback HTTP or private Tailscale HTTPS to the authenticated MedGemma service; do not send SCIN material to OpenAI or another external provider.
 
 The preparation utility pins the official metadata object generations used for selection, excludes the publicly reported missing image, rejects paths outside the official image directory, validates JPEG/PNG decoding, and removes duplicate hashes within the prepared subset. Selection rotates deterministic skin-tone buckets when labels are available and requires a reported nonsensitive body location. Skin-tone metadata is used only for test-set selection. Dermatologist condition labels never enter the generated model manifest or transcript.
 
@@ -169,6 +171,22 @@ Two unique SCIN cases completed both local variants on the pinned CPU runtime. A
 
 These results establish that the corrected local transport and validation pipeline can return contract-valid output for those two inputs. They are not a measurement of clinical accuracy, fairness, diagnostic performance or readiness for clinical use. Images, metadata, manifests and reports remain in private ignored directories and were not committed.
 
+### Unraid Q8 verification recorded October 24, 2026
+
+The dedicated Unraid service completed one authorized SCIN image-only request
+through private Tailscale HTTPS. The request passed image decoding, Q8_0 model
+generation, JSON parsing, Python schema/evidence validation, TypeScript
+schema/evidence validation, and source attribution in approximately 52.0
+seconds end to end (51.5 seconds reported by the service). Peak sampled usage
+was 3.057 GiB container RAM, 3,690 MiB GPU memory, and 955% container CPU on
+the 10-CPU limit. The project owner asked to stop after this image passed, so
+the SCIN context variant was not run on the server.
+
+This is an integration result for one input, not clinical validation or a
+performance guarantee. The SCIN photograph, derived context, API key, and
+generated report remain in private permission-restricted directories outside
+the repository.
+
 ## Hosted service
 
 The included Dockerfile packages this same API wrapper, not a generic Hugging Face/Vertex prediction endpoint. Build from the repository root:
@@ -183,6 +201,8 @@ docker run --rm --gpus all -p 127.0.0.1:8000:8000 \
 Use a GPU-capable Docker host with the NVIDIA container runtime. Supply secrets at runtime, and use a writable persistent private cache when appropriate; do not bake credentials or model weights into a public image. For a remote GPU VM/container, put the wrapper behind TLS and network access controls; preserve bearer authorization, disable request-body/access logging, set proxy body limits to at most 15 MB, and allow the configured inference timeout. Configure the Next.js server's `MEDGEMMA_URL` to that HTTPS base URL. The wrapper bounds request size, returns redacted validation errors, rejects concurrent inference with 429, and does not persist inputs. It does not establish a complete privacy or retention policy for hosting infrastructure.
 
 A raw Vertex AI/Model Garden endpoint has a different request/authentication contract and is **not** a drop-in URL for this adapter. Deploy this wrapper or implement and test a separate endpoint adapter. Docker/GPU/hosted deployment has not been executed in the development checks below.
+
+The dedicated Unraid Q8/CUDA deployment is documented in [`deploy/unraid/README.md`](../deploy/unraid/README.md). Its host port is loopback-only and intended to sit behind private Tailscale Serve HTTPS. Teammate SpotCheckMD instances set `MEDGEMMA_URL` to the server's `https://...ts.net` URL and retain the shared bearer key in server-side configuration.
 
 Use a long-running Node server for the app. One encounter can make several sequential calls; short serverless request limits may terminate it. The service caps generated tokens and requests a generation time limit; GPU work may finish after a client disconnect. There is no durable job queue or instant remote cancellation. Encounter run ownership, revision checks before each external call, and commit checks prevent stale output from replacing newer edits. Expired runs can be retried after 30 minutes; an old worker cannot complete a newer run.
 
@@ -211,4 +231,9 @@ Checks completed before testing was paused: 28 Node mock/unit/API/evaluation tes
 
 Official gated model access, download and source checksum verification succeeded. The pinned local conversion and native CPU service startup succeeded, including authenticated health and unauthenticated-request rejection. Both original synthetic TypeScript requests failed (image-only after approximately 207 seconds; image plus fictional transcript after approximately 182 seconds). Their old reports did not retain a stage. A preserved controlled native response from the same setup completed generation (`finish_reason=stop`) but returned the JSON Schema itself, which was rejected at schema validation. Inspection found that the llama.cpp request placed the schema outside the endpoint's required `response_format.json_schema.schema` wrapper. After correcting that wrapper, four real SCIN requests across two images and both context variants passed the complete integration contract as recorded above. This verifies the integration path for those requests and does not establish clinical correctness.
 
-CUDA memory/latency, Docker deployment, hosted inference, live OpenAI calls, phone capture, and clinical comparisons remain unverified. No clinical performance or cost results have been invented. Private model files, credentials and live verification artifacts are excluded from source control.
+The Unraid Docker/CUDA path and private Tailscale transport have been exercised
+for the single SCIN request recorded above. Broader CUDA performance, reboot
+recovery, other hosted environments, live OpenAI calls, phone capture, and
+clinical comparisons remain unverified. No clinical performance or cost
+results have been invented. Private model files, credentials and live
+verification artifacts are excluded from source control.

@@ -19,11 +19,11 @@ Intel Macs can explicitly select the [experimental quantized CPU backend](docs/m
 
 ## Demo journey
 
-1. Choose one of two fictional patient profiles. Confirm the patient and all-party recording/processing consent.
+1. Open one of two fictional patient charts in **Demo EHR**. Review demographics, medications, allergies, history, dated results, and prior notes. Start a visit and confirm patient and all-party recording/processing consent. Select relevant history in the chart panel and save the reviewed selection.
 2. Create a one-use, five-minute QR link and scan it on a phone on the **same reachable host**. For a phone, use an HTTPS tunnel or local network host; `localhost` on a laptop will refer to the phone itself. This prototype has **no clinician authentication**; anyone with the token can view its fictional encounter.
 3. Capture staged images and/or short fictional audio. Photos are normalized with EXIF metadata stripped. Brightness, detail, and resolution heuristics warn when to retake; they cannot certify image quality.
 4. Save the selected specialty, image type, and any explicitly confirmed location/context, then run analysis. Review the transcript and each atomic suggestion with evidence links, uncertainty/quality flags, and an editable reviewer note. The system flags a basic left/right discrepancy, but humans must check for all other contradictions. Reject findings from photos marked `retake`; explain uncertain or edited findings.
-5. Accept or reject every suggestion, resolve flagged conflicts, acknowledge any partial-analysis warnings, enter a demo clinician name, and approve. Any subsequent change revokes approval. The export button records a **simulation**, never sends anything to an EHR.
+5. Accept or reject every suggestion, resolve flagged conflicts, acknowledge partial-analysis warnings, and preview the exact note. Enter a demo clinician name and choose **Approve & send to Demo EHR**. The approved note is saved into this workspace’s fictional patient chart; its receipt opens the saved document. Later edits require approval and create a linked amendment. See [Demo EHR details](docs/ehr-demo.md).
 
 Drafts, transcripts, normalized images, and audio are stored in `.aura-data/` on the local server, ignored by git. Delete that directory to remove this demo's stored data. Do not treat this as a privacy/retention policy for real patient records. Server state is a local JSON file with a single-process write lock; it is not safe for multiple server replicas or production. Sessions are anonymous demo cookies; QR codes are temporary encounter capabilities, not identity verification.
 
@@ -32,7 +32,7 @@ Drafts, transcripts, normalized images, and audio are stored in `.aura-data/` on
 - **Preflight:** decode/rotate, strip metadata, resize, and flag low resolution, extreme lighting, and low edge detail. This heuristic can misclassify uniform images or miss blur/glare; retake advice is advisory.
 - **Constrained multimodal suggestion:** send each photo with its source ID and quality warnings, plus a separate transcript source, to a vision model. Request strict structured, atomic observations. Image-derived suggestions are limited to visible descriptors; no lesion diagnosis, malignancy probability, unmeasured size, or treatment is inferred.
 - **Evidence binding:** validate returned source IDs against stored media/transcript, require a quote/visible-region descriptor for each, and verify transcript quotes occur in the transcript. Keep suggestions pending; prevent approval with pending claims, missing evidence, unresolved conflicts, or unsupported image quality.
-- **Review/export:** clinician controls the wording and approval; the SOAP draft carries source IDs. Export is an idempotent local simulation. There is no EHR connector yet.
+- **Review/export:** clinician controls the wording and approval; the SOAP draft carries source IDs. Approved notes are saved idempotently into the local Demo EHR chart with their history snapshot and model provenance. The adapter currently implements local simulation; no external EHR is connected.
 
 The model's `observed/uncertain/not assessable` tags are **not calibrated confidence scores**, and source IDs do not prove that an image claim is true. The doctor must inspect the actual photo. Phone zoom cannot measure lesion size. The first AI version is a guarded documentation workflow, not a trained dermatology classifier.
 

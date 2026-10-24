@@ -34,7 +34,7 @@ export async function analyzeEncounter(snapshot: Encounter, runId: string, deps:
       transcript = { id: transcriptSourceId, kind: "transcript", label: "Unverified timestamped transcript", text: artifact.text, mediaId: audio.mediaId, transcriptArtifactId: artifact.id, createdAt: artifact.finalizedAt };
       newSources.push(transcript);
       newTranscripts.push(artifact);
-    } catch { warnings.push("Audio transcription failed. Images were processed without transcript context; no spoken findings were invented. Retry or document manually."); }
+    } catch { warnings.push("Audio transcription failed or more than one voice was detected. Images were processed without transcript context; no spoken findings were invented. Retry with doctor-only audio or document manually."); }
   }
   let windows: ReturnType<typeof transcriptWindows> = [];
   let contextFailed = false;

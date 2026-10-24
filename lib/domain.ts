@@ -86,9 +86,11 @@ export function composeNote(e: Encounter, approvedOnly = true): string {
     const lines = findings.map(f => {
       const evidence = f.evidence.map(v => {
         if (!v.transcript) return v.sourceId;
-        const mappedRole = e.transcriptRoles?.artifactId === v.transcript.artifactId
-          ? v.transcript.speaker === e.transcriptRoles.patientSpeaker ? "patient" : v.transcript.speaker === e.transcriptRoles.clinicianSpeaker ? "clinician" : "unmapped speaker"
-          : `unconfirmed ${v.transcript.speaker}`;
+        const mappedRole = v.transcript.speaker === "CLINICIAN"
+          ? "clinician"
+          : e.transcriptRoles?.artifactId === v.transcript.artifactId
+            ? v.transcript.speaker === e.transcriptRoles.patientSpeaker ? "patient" : v.transcript.speaker === e.transcriptRoles.clinicianSpeaker ? "clinician" : "unmapped speaker"
+            : `unconfirmed ${v.transcript.speaker}`;
         return `${v.sourceId}; ${mappedRole}; ${transcriptTimestamp(v.transcript.startMs)}–${transcriptTimestamp(v.transcript.endMs)}`;
       }).join(", ");
       return `${!approvedOnly && f.review === "pending" ? "[PENDING REVIEW] " : ""}${f.certainty === "observed" ? "" : `[${f.certainty.replaceAll("_", " ")}] `}${f.text}${f.limitation ? ` (Limitation: ${f.limitation})` : ""} [${evidence}]${f.reviewNote ? `\nReviewer: ${f.reviewNote}` : ""}`;

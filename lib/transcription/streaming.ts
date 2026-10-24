@@ -16,7 +16,7 @@ export async function assemblyAIStreamingSession(keyterms: string[], fetcher: ty
   url.searchParams.set("speech_model", process.env.ASSEMBLYAI_STREAMING_MODEL || "u3-rt-pro");
   url.searchParams.set("domain", "medical-v1");
   url.searchParams.set("speaker_labels", "true");
-  url.searchParams.set("max_speakers", "2");
+  url.searchParams.set("max_speakers", "1");
   url.searchParams.set("min_turn_silence", "800");
   url.searchParams.set("max_turn_silence", "3600");
   if (keyterms.length) url.searchParams.set("keyterms_prompt", JSON.stringify(keyterms.slice(0, 100)));

@@ -217,8 +217,7 @@ export default function Dashboard() {
         try {
           const data = JSON.parse(String(event.data));
           if (data.type !== "Turn" || typeof data.transcript !== "string" || !data.transcript.trim()) return;
-          const speaker = typeof data.speaker_label === "string" ? data.speaker_label : Array.isArray(data.words) && typeof data.words[0]?.speaker === "string" ? data.words[0].speaker : "Speaker";
-          liveTurns.current.set(String(data.turn_order ?? liveTurns.current.size), `${speaker}: ${data.transcript}${data.end_of_turn ? "" : " …"}`);
+          liveTurns.current.set(String(data.turn_order ?? liveTurns.current.size), `Doctor: ${data.transcript}${data.end_of_turn ? "" : " …"}`);
           setLiveCaption([...liveTurns.current.values()].join("\n"));
         } catch { /* ignore non-transcript provider events */ }
       };
@@ -511,7 +510,7 @@ export default function Dashboard() {
             </button>
             {recording && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-teal-800">{liveCaptionState === "live" ? "Live provisional transcript" : liveCaptionState === "connecting" ? "Connecting live captions" : liveCaptionState === "unavailable" ? "Live captions unavailable; recording continues" : "Recording"}</p><p className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-600">{liveCaption || "Waiting for speech…"}</p><p className="mt-2 text-[10px] text-slate-500">Provisional captions are never used as note evidence. The completed recording is transcribed again after the visit.</p></div>}
             <p className="mt-3 text-[11px] leading-5 text-slate-500">
-              Use short fictional dialogue. Speaker identity and patient statements must be checked during review.
+              Record doctor dictation only; do not record the patient's voice. Review the transcript and choose the correct SOAP section for each statement.
             </p>
             <div
               onDragOver={event => handleFileDragOver(event, "audio")}
@@ -875,8 +874,8 @@ export default function Dashboard() {
           <div className="lg:col-span-2"><div className={`${card} flex flex-wrap items-center justify-between gap-4 p-5`}><div><p className="font-semibold">Ready to propose findings?</p><p className="mt-1 text-xs text-slate-500">AI suggestions stay pending until a clinician reviews each one. Retake warnings remain visible.</p></div><button disabled={busy || recording || !current.consent || !current.patientConfirmed || !current.sources.some(s => s.kind === "image" || s.kind === "audio")} onClick={() => void act("analyze", {}, "review")} className={`${button} bg-teal-800 text-white`}>{busy ? <LoaderCircle className="animate-spin" size={16} /> : <Sparkles size={16} />} {busy ? "Processing…" : "Analyze & review"}</button></div></div>
         </div>}
         {stage === "review" && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)]"><div className="space-y-6">
-          <TranscriptReview encounter={current} disabled={busy} onConfirm={(artifactId, patientSpeaker, clinicianSpeaker) => void act("transcript-roles", { artifactId, patientSpeaker, clinicianSpeaker })} onExtract={(artifactId, patientSpeaker) => void act("transcript-extractive", { artifactId, patientSpeaker })} />
-          <ImageAnalysisContext encounter={current} disabled={busy} onAcknowledge={() => void act("acknowledge-warnings")} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Evidence-backed findings</h2><p className="mt-2 text-xs text-slate-500">Open the cited source for each claim. Accept, edit, or reject every suggestion.</p>{current.analysis === "failed" && <p className="mt-4 text-sm text-red-700">{current.analysisError}</p>}{!current.findings.length && <p className="mt-5 rounded-xl bg-slate-50 p-6 text-sm text-slate-500">No suggestions yet. Return to capture and run analysis.</p>}<div className="mt-5 space-y-4">{current.findings.map(f => <FindingCard key={f.id} finding={f} sources={current.sources} disabled={busy} onSave={(review, text, reviewNote) => void act("review", { findingId: f.id, review, text, reviewNote })} />)}</div></section>
+          <TranscriptReview encounter={current} />
+          <ImageAnalysisContext encounter={current} disabled={busy} onAcknowledge={() => void act("acknowledge-warnings")} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Evidence-backed findings</h2><p className="mt-2 text-xs text-slate-500">Open the cited source for each claim. Accept, edit, or reject every suggestion.</p>{current.analysis === "failed" && <p className="mt-4 text-sm text-red-700">{current.analysisError}</p>}{!current.findings.length && <p className="mt-5 rounded-xl bg-slate-50 p-6 text-sm text-slate-500">No suggestions yet. Review the transcript above, then add clinician-authored findings to the appropriate SOAP sections.</p>}<div className="mt-5 space-y-4">{current.findings.map(f => <FindingCard key={f.id} finding={f} sources={current.sources} disabled={busy} onSave={(review, text, reviewNote) => void act("review", { findingId: f.id, review, text, reviewNote })} />)}</div></section>
           <ManualFinding sources={current.sources} disabled={busy} onSave={(section, sourceId, text, evidenceQuote) => void act("manual", { section, sourceId, text, evidenceQuote })} />
           <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><TriangleAlert size={18} className="text-amber-600" /> Uncertainty and conflicts</h2>{current.conflicts.length ? current.conflicts.map(c => <div key={c.id} className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm text-amber-900">{c.description}</p><label className="mt-3 block text-xs font-semibold">Clinician resolution<textarea defaultValue={c.resolution} onBlur={e => { if (e.target.value !== c.resolution) void act("resolve", { conflictId: c.id, resolution: e.target.value }); }} className="mt-2 w-full rounded-lg border border-amber-200 p-2 text-sm" rows={2} /></label></div>) : <p className="mt-3 text-xs text-slate-500">No automated left/right discrepancy flagged. Absence of a flag does not rule out other contradictions.</p>}<p className="mt-4 text-xs text-slate-500">Uncertain or limited-image findings require a reviewer note before approval. Image quality is never a diagnosis.</p></section>
           <section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Original sources</h2><div className="mt-4 space-y-3">{current.sources.map(s => <div id={`source-${s.id}`} key={s.id} className="scroll-mt-6 rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-bold">{s.label} <span className="font-normal text-slate-500">· {s.id.slice(0, 8)}</span></p>{s.kind === "image" && <img src={`/api/media/${s.previewMediaId || s.mediaId}`} alt={s.label} className="mt-3 max-h-64 w-full rounded-lg bg-white object-contain" />}{s.kind === "audio" && <audio className="mt-3 w-full" controls src={`/api/media/${s.mediaId}`} />}{s.kind === "transcript" && <p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-600">{s.text}</p>}</div>)}</div></section>
@@ -940,18 +939,47 @@ function displayTimestamp(milliseconds: number) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function TranscriptReview({ encounter, disabled, onConfirm, onExtract }: { encounter: Encounter; disabled: boolean; onConfirm: (artifactId: string, patientSpeaker: string, clinicianSpeaker: string) => void; onExtract: (artifactId: string, patientSpeaker: string) => void }) {
+function TranscriptReview({ encounter }: { encounter: Encounter }) {
   const artifact = encounter.transcripts?.at(-1);
-  const speakers = artifact ? [...new Set(artifact.utterances.map(utterance => utterance.speaker).filter(speaker => speaker !== "UNKNOWN"))] : [];
-  const [patientSpeaker, setPatientSpeaker] = useState("");
-  const [clinicianSpeaker, setClinicianSpeaker] = useState("");
-  useEffect(() => {
-    const roles = encounter.transcriptRoles?.artifactId === artifact?.id ? encounter.transcriptRoles : undefined;
-    setPatientSpeaker(roles?.patientSpeaker || speakers[0] || "");
-    setClinicianSpeaker(roles?.clinicianSpeaker || speakers.find(speaker => speaker !== (roles?.patientSpeaker || speakers[0])) || "");
-  }, [artifact?.id, encounter.transcriptRoles?.confirmedAt]);
   if (!artifact) return null;
-  return <section className={`${card} p-5 sm:p-6`}><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-base font-semibold">Finalized encounter transcript</h2><p className="mt-1 text-xs text-slate-500">{artifact.provider} · {artifact.model} · immutable digest {artifact.digest.slice(0, 12)}</p></div><span className="rounded bg-teal-50 px-2 py-1 text-[10px] font-bold uppercase text-teal-800">{artifact.settings.medicalMode ? "Medical Mode" : "General transcription"}</span></div><p className="mt-3 text-xs leading-5 text-slate-500">This finalized post-visit transcript is the evidence source. Live captions were provisional and were not saved into the note.</p>{artifact.settings.keyterms.length > 0 && <p className="mt-2 text-xs text-slate-500">Key terms: {artifact.settings.keyterms.join(", ")}</p>}<div className="mt-4 max-h-80 space-y-2 overflow-auto rounded-xl bg-slate-50 p-3">{artifact.utterances.map(utterance => <div key={utterance.id} className="rounded-lg bg-white p-3 text-xs leading-5"><p className="font-bold text-teal-800">{utterance.speaker} · {displayTimestamp(utterance.startMs)}–{displayTimestamp(utterance.endMs)}</p><p className="mt-1 text-slate-700">{utterance.text}</p>{utterance.words.length > 0 && <p className="mt-1 text-[10px] text-slate-400">{utterance.words.length} timestamped words</p>}</div>)}</div>{speakers.length > 1 ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="text-xs font-semibold text-amber-900">Confirm the roles after listening to the recording. Diarization labels are not identities. In free local mode, the confirmed patient turns become pending Subjective findings.</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold">Patient speaker<select value={patientSpeaker} onChange={event => setPatientSpeaker(event.target.value)} className="mt-2 w-full rounded-lg border border-amber-200 bg-white p-2.5 text-sm">{speakers.map(speaker => <option key={speaker}>{speaker}</option>)}</select></label><label className="text-xs font-semibold">Clinician speaker<select value={clinicianSpeaker} onChange={event => setClinicianSpeaker(event.target.value)} className="mt-2 w-full rounded-lg border border-amber-200 bg-white p-2.5 text-sm">{speakers.map(speaker => <option key={speaker}>{speaker}</option>)}</select></label></div><button type="button" disabled={disabled || !patientSpeaker || !clinicianSpeaker || patientSpeaker === clinicianSpeaker} onClick={() => onConfirm(artifact.id, patientSpeaker, clinicianSpeaker)} className={`${button} mt-3 bg-teal-800 text-white`}>{encounter.transcriptRoles?.artifactId === artifact.id ? "Update speaker roles" : "Confirm speaker roles"}</button></div> : <div className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-900"><p>Two distinct speakers were not reliably identified. You can create exact extractive Subjective findings from this voice, but attribution remains unconfirmed until clinician review.</p><button type="button" disabled={disabled || !speakers[0]} onClick={() => onExtract(artifact.id, speakers[0])} className={`${button} mt-3 border border-amber-300 bg-white`}>Create local extractive findings</button></div>}</section>;
+
+  return (
+    <section className={`${card} p-5 sm:p-6`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Doctor dictation transcript</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            {artifact.provider} · {artifact.model} · immutable digest {artifact.digest.slice(0, 12)}
+          </p>
+        </div>
+        <span className="rounded bg-teal-50 px-2 py-1 text-[10px] font-bold uppercase text-teal-800">
+          {artifact.settings.medicalMode ? "Medical Mode" : "General transcription"}
+        </span>
+      </div>
+
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        Audio is treated as clinician dictation. Live captions are provisional; this finalized transcript is the evidence source.
+        Add statements to the appropriate SOAP section and verify whether any history was explicitly reported by the patient.
+      </p>
+      {artifact.settings.keyterms.length > 0 && (
+        <p className="mt-2 text-xs text-slate-500">Key terms: {artifact.settings.keyterms.join(", ")}</p>
+      )}
+
+      <div className="mt-4 max-h-80 space-y-2 overflow-auto rounded-xl bg-slate-50 p-3">
+        {artifact.utterances.map(utterance => (
+          <div key={utterance.id} className="rounded-lg bg-white p-3 text-xs leading-5">
+            <p className="font-bold text-teal-800">
+              Doctor · {displayTimestamp(utterance.startMs)}–{displayTimestamp(utterance.endMs)}
+            </p>
+            <p className="mt-1 text-slate-700">{utterance.text}</p>
+            {utterance.words.length > 0 && (
+              <p className="mt-1 text-[10px] text-slate-400">{utterance.words.length} timestamped words</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function FindingCard({ finding: f, sources, disabled, onSave }: { finding: Finding; sources: Encounter["sources"]; disabled: boolean; onSave: (review: Finding["review"], text: string, note: string) => void }) {

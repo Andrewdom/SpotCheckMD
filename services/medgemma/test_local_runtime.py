@@ -65,12 +65,13 @@ def test_owned_loopback_runtime_and_cleanup(setup):
     assert state.client_options["follow_redirects"] is False
     assert runtime.revision == manifest["sourceRevision"]
     assert runtime.runtime["modelSha256"] == manifest["modelSha256"]
-    assert runtime(Image.new("RGB", (16, 16)), "synthetic context only") == "{}"
+    bound_schema = {**SCHEMA, "title": "request-bound"}
+    assert runtime(Image.new("RGB", (16, 16)), "synthetic context only", bound_schema) == "{}"
     parts = state.payload["messages"][0]["content"]
     assert parts[1]["text"] == "synthetic context only"
     assert base64.b64decode(parts[0]["image_url"]["url"].split(",")[1]).startswith(b"\x89PNG")
     assert state.payload["response_format"] == {"type": "json_schema", "json_schema": {
-        "name": "image_analysis", "strict": True, "schema": SCHEMA}}
+        "name": "image_analysis", "strict": True, "schema": bound_schema}}
     assert state.payload["cache_prompt"] is False
     runtime.close()
     assert state.terminated and state.client_closed and not keyfile.exists()

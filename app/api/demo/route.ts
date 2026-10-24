@@ -8,6 +8,7 @@ import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, crea
 import { contextSchema, PROMPT_VERSION } from "@/lib/image-analysis/contracts";
 import { configuredImageProvider } from "@/lib/image-analysis/providers";
 import { analyzeEncounter } from "@/lib/image-analysis/pipeline";
+import { demoEhr, selectedChartContext } from "@/lib/ehr/adapter";
 
 export const runtime = "nodejs";
 const safe = (e: Encounter) => ({ ...e, owner: undefined, sources: e.sources.map(({ mediaId, ...source }) => ({ ...source, mediaId: mediaId || undefined })) });
@@ -70,7 +71,11 @@ export async function POST(request: Request) {
       auth(db, request, encounterId);
       const e = db.encounters.find(v => v.id === encounterId)!;
       checkRevision(e, body.revision);
-      if (action === "context") {
+      if (action === "chart-context") {
+        if (!e.consent || !e.patientConfirmed) throw new AppError(400, "Confirm patient and consent before including chart history.");
+        e.chartContext = selectedChartContext(db, e, body.selection);
+        changed(e, "reviewed chart history updated");
+      } else if (action === "context") {
         const context = contextSchema.safeParse(body.context);
         if (!context.success) throw new AppError(400, "Choose a supported specialty/image type and bounded clinical context.");
         e.clinicalContext = context.data; e.specialty = context.data.specialty;
@@ -103,17 +108,19 @@ export async function POST(request: Request) {
         const conflict = e.conflicts.find(c => c.id === body.conflictId);
         if (!conflict) throw new AppError(400, "Conflict not found.");
         conflict.resolution = required(body.resolution, 500); changed(e, "conflict reviewed");
-      } else if (action === "approve") {
+      } else if (action === "approve" || action === "approve-send") {
         const blockers = reviewBlockers(e);
         if (blockers.length) throw new AppError(400, blockers.join(" "));
         const physician = required(body.physician, 100).trim();
         if (physician.length < 3) throw new AppError(400, "Enter the reviewing clinician’s name.");
         const note = composeNote(e);
-        e.approval = { revision: e.revision, physician, at: new Date().toISOString(), note, digest: digest(note) };
-        e.audit.push({ at: new Date().toISOString(), action: "approved", revision: e.revision });
+        if (!e.approval || e.approval.revision !== e.revision || e.approval.digest !== digest(note)) {
+          e.approval = { revision: e.revision, physician, at: new Date().toISOString(), note, digest: digest(note) };
+          e.audit.push({ at: new Date().toISOString(), action: "approved", revision: e.revision });
+        }
+        if (action === "approve-send") demoEhr.submitApprovedNote(db, e);
       } else if (action === "export") {
-        if (!e.approval || e.approval.revision !== e.revision || digest(composeNote(e)) !== e.approval.digest) throw new AppError(400, "Review and approve the current draft first.");
-        if (!e.export) { e.export = { id: uid(), at: new Date().toISOString(), revision: e.revision, mode: "simulation" }; e.audit.push({ at: new Date().toISOString(), action: "simulated EHR export", revision: e.revision }); }
+        demoEhr.submitApprovedNote(db, e);
       } else throw new AppError(400, "Unknown action.");
       return { encounter: safe(e) };
     });

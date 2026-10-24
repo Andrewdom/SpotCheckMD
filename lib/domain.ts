@@ -1,4 +1,5 @@
 import type { ClinicalContext, ImageResult } from "./image-analysis/contracts";
+import { formatChartContext, type ChartContext, type EhrReceipt } from "./ehr/types";
 export type Specialty = ClinicalContext["specialty"];
 export type Section = "S" | "O" | "A" | "P";
 export type Evidence = { sourceId: string; quote: string; role?: "visual" | "context" | "spoken" | "clinician" };
@@ -28,6 +29,8 @@ export type Encounter = {
   imageAnalyses?: (ImageResult & { runId: string; provider: string })[];
   analysisWarnings?: string[]; warningsAcknowledged?: boolean;
   activeAnalysis?: { id: string; expiresAt: number };
+  chartContext?: ChartContext;
+  ehrReceipts?: EhrReceipt[];
   approval: null | { revision: number; physician: string; at: string; note: string; digest: string };
   export: null | { id: string; at: string; revision: number; mode: "simulation" };
   audit: { at: string; action: string; revision: number }[];
@@ -42,6 +45,7 @@ export function reviewBlockers(e: Encounter): string[] {
   const errors: string[] = [];
   if (!e.patientConfirmed) errors.push("Confirm the patient and encounter.");
   if (!e.consent) errors.push("Confirm capture and processing consent.");
+  if (e.chartContext && e.chartContext.patientId !== e.patientId) errors.push("Chart context must belong to this patient.");
   if (e.analysis === "running") errors.push("Wait for analysis to finish.");
   if (e.analysisWarnings?.length && !e.warningsAcknowledged) errors.push("Acknowledge incomplete analysis and its limitations before approval.");
   if (!e.findings.some(f => f.review === "accepted")) errors.push("Accept at least one supported finding.");
@@ -59,9 +63,10 @@ export function reviewBlockers(e: Encounter): string[] {
 }
 
 export function composeNote(e: Encounter, approvedOnly = true): string {
-  return (["S", "O", "A", "P"] as Section[]).map(section => {
+  const soap = (["S", "O", "A", "P"] as Section[]).map(section => {
     const findings = e.findings.filter(f => f.section === section && (approvedOnly ? f.review === "accepted" : f.review !== "rejected"));
     const lines = findings.map(f => `${!approvedOnly && f.review === "pending" ? "[PENDING REVIEW] " : ""}${f.certainty === "observed" ? "" : `[${f.certainty.replaceAll("_", " ")}] `}${f.text}${f.limitation ? ` (Limitation: ${f.limitation})` : ""} [${f.evidence.map(v => v.sourceId).join(", ")}]${f.reviewNote ? `\nReviewer: ${f.reviewNote}` : ""}`);
     return `${sectionLabels[section].toUpperCase()}\n${lines.join("\n") || "Not documented."}`;
   }).join("\n\n");
+  return [formatChartContext(e.chartContext), soap].filter(Boolean).join("\n\n");
 }

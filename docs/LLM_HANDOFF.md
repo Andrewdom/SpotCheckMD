@@ -32,13 +32,13 @@ Non-negotiable boundaries:
 | Repository | https://github.com/Andrewdom/SpotCheckMD |
 | Feature branch | `feature/medgemma-contextual-analysis` |
 | Feature review | Draft PR #3: https://github.com/Andrewdom/SpotCheckMD/pull/3 |
-| PR base | `docs/project-context-architecture` — stacked on documentation PR #1 |
-| Documentation review | https://github.com/Andrewdom/SpotCheckMD/pull/1 |
+| PR base | `main` — consolidated documentation and implementation review |
+| Superseded documentation review | PR #1 is closed; its complete commit is retained in PR #3 |
 | Latest implementation commit | `b80c974` — experimental local MedGemma CPU runtime |
 | Main status at publication | No changes from this work were merged into `main` |
 | Known overlapping work | `feat/region-observations`; coordinate changes to `lib/analysis.ts`, `lib/domain.ts`, `app/api/demo/route.ts`, and `app/page.tsx` |
 
-Inspect current remote state before acting; branches and PR status can change. Retargeting the stacked PR after the docs base merges is a coordination task, not an instruction to merge now.
+Inspect current remote state before acting; branches and PR status can change. The owner requested branch consolidation after this handoff was first published. The redundant `docs/LLM_HANDOFF.md` and `docs/project-context-architecture` remote branches were removed after verifying their commits are retained in `feature/medgemma-contextual-analysis`. PR #3 now targets `main` directly; PR #1 is closed as superseded. The independent `feat/region-observations` branch and PR #2 remain separate because they contain unique teammate work. No application code was merged or changed by this cleanup.
 
 The original owner's `Downloads/SpotCheckMD-main` folder was a ZIP without Git metadata. Work occurred in a separate `Downloads/SpotCheckMD-medgemma` clone, preserving the ZIP and its local data. Teammates should use their own clone/worktree; these directory names are historical context, not required paths.
 

@@ -1,0 +1,34 @@
+services:
+  medgemma:
+    container_name: spotcheckmd-medgemma
+    image: spotcheckmd-medgemma:q8-cuda
+    build:
+      context: ../..
+      dockerfile: services/medgemma/Dockerfile.unraid
+      args:
+        LLAMA_CPP_REVISION: edc353842c1be9b4ebc27460a1da4526a026d3a9
+    restart: unless-stopped
+    env_file:
+      - /mnt/user/appdata/spotcheckmd-medgemma/config/service.env
+    environment:
+      MEDGEMMA_BACKEND: llama_cpp
+      MEDGEMMA_GGUF_MANIFEST: /models/manifest.json
+      MEDGEMMA_LLAMA_BINARY: /usr/local/bin/llama-server
+      MEDGEMMA_GPU_LAYERS: "20"
+      MEDGEMMA_THREADS: "10"
+      MEDGEMMA_MM_PROJ_OFFLOAD: "true"
+      MEDGEMMA_KV_OFFLOAD: "false"
+    gpus: all
+    ports:
+      - "127.0.0.1:8321:8000"
+    volumes:
+      - /mnt/user/appdata/spotcheckmd-medgemma/models:/models:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 24g
+    cpus: 10

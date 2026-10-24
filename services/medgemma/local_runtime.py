@@ -26,15 +26,18 @@ class LocalManifest(BaseModel):
     sourceRevision: str = Field(pattern=SHA)
     converterRevision: str = Field(pattern=SHA)
     runtimeRevision: str = Field(pattern=SHA)
-    quantization: str = Field(pattern=r"^Q4_K_M$")
+    quantization: str = Field(pattern=r"^(Q4_K_M|Q8_0)$")
     modelFile: str = Field(min_length=1)
     projectorFile: str = Field(min_length=1)
     modelSha256: str = Field(pattern=DIGEST)
     projectorSha256: str = Field(pattern=DIGEST)
 
 def sha256_file(path: Path):
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 def load_manifest(path: Path):
     manifest = LocalManifest.model_validate_json(path.read_text())
@@ -43,6 +46,18 @@ def load_manifest(path: Path):
     if model == projector or sha256_file(model) != manifest.modelSha256 or sha256_file(projector) != manifest.projectorSha256:
         raise ValueError("Local model integrity check failed")
     return manifest, model, projector
+
+def bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if value < minimum or value > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+def enabled(name: str, default: bool = False) -> bool:
+    value = os.getenv(name, "1" if default else "0").strip().lower()
+    if value not in ("0", "1", "false", "true"):
+        raise ValueError(f"{name} must be true or false")
+    return value in ("1", "true")
 
 class LlamaCpp:
     def __init__(self, schema):
@@ -77,13 +92,22 @@ class LlamaCpp:
         keyfile = Path(self.secrets_dir.name) / "key"
         keyfile.touch(mode=0o600)
         keyfile.write_text(key)
-        # Explicit CPU operation, one slot, bounded context, no prompt shifting or logs.
+        gpu_layers = bounded_int("MEDGEMMA_GPU_LAYERS", 0, 0, 34)
+        threads = bounded_int("MEDGEMMA_THREADS", 4, 1, 64)
+        # One slot, bounded context, no prompt shifting or request logs. GPU and
+        # projector offload remain explicit so small GPUs can use hybrid inference.
         command = [str(binary), "--model", str(model), "--mmproj", str(projector), "--alias", self.alias,
                    "--host", "127.0.0.1", "--port", str(port), "--api-key-file", str(keyfile),
-                   "--n-gpu-layers", "0", "--no-mmproj-offload", "--threads", "4", "--threads-batch", "4",
+                   "--n-gpu-layers", str(gpu_layers), "--threads", str(threads), "--threads-batch", str(threads),
                    "--ctx-size", "16384", "--parallel", "1", "--no-context-shift", "--predict", "3000",
                    "--no-webui", "--no-slots", "--log-disable"]
-        child_env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL")}
+        if not enabled("MEDGEMMA_MM_PROJ_OFFLOAD"):
+            command.append("--no-mmproj-offload")
+        if not enabled("MEDGEMMA_KV_OFFLOAD", default=True):
+            command.append("--no-kv-offload")
+        child_env = {k: v for k, v in os.environ.items() if k in (
+            "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES",
+            "NVIDIA_VISIBLE_DEVICES", "NVIDIA_DRIVER_CAPABILITIES")}
         self.process = subprocess.Popen(command, env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.client = httpx.Client(base_url=f"http://127.0.0.1:{port}", headers={"Authorization": "Bearer " + key},
                                    timeout=570, follow_redirects=False, trust_env=False)

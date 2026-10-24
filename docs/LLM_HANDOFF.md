@@ -61,7 +61,7 @@ Fictional encounter + confirmation/consent
   -> normalized images / recorded audio / saved encounter context
   -> audio transcription (existing OpenAI path, when configured)
   -> each image + quality warnings + source IDs + transcript windows
-       -> explicitly selected image provider (GPT-4o or MedGemma)
+       -> default application image provider (MedGemma)
        -> shared schema / source / evidence checks
        -> pending visual observations, contextual history, limitations/conflicts
   -> separate transcript documentation path -> pending spoken findings
@@ -70,7 +70,7 @@ Fictional encounter + confirmation/consent
   -> idempotent simulated export
 ```
 
-- GPT-4o remains the default image provider; `IMAGE_ANALYSIS_PROVIDER=medgemma` opts into MedGemma. Provider errors do not trigger an automatic model fallback.
+- MedGemma is the default and only image provider in the normal application workflow. Provider errors do not trigger an automatic model fallback. The GPT-4o adapter remains exported for explicit research comparisons.
 - The official model identifier is `google/medgemma-1.5-4b-it`. No model training or fine-tuning was performed. Transformers remains its default backend; native CPU quantization is explicit.
 - Existing audio transcription uses the code's `gpt-transcribe` identifier; GPT-4o handles separate transcript documentation. These identifiers do not prove live account/model availability. MedGemma image-only analysis does not require an OpenAI key; audio/transcript paths do.
 - Each image is processed separately. Image findings cite the exact image; transcript citations are context, not visual proof. Visual observations enter Objective; generated contextual history is not silently duplicated into SOAP as a verified image finding.
@@ -120,7 +120,7 @@ Environment names, never values containing secrets:
 
 | Setting | Role |
 | --- | --- |
-| `IMAGE_ANALYSIS_PROVIDER` | `medgemma` to opt in; default `openai` |
+| `IMAGE_ANALYSIS_PROVIDER` | Optional explicit `medgemma`; unset also selects MedGemma |
 | `MEDGEMMA_URL` | Wrapper base URL; loopback locally, HTTPS off loopback |
 | `MEDGEMMA_API_KEY` | Shared secret in Next.js and wrapper environments |
 | `MEDGEMMA_BACKEND` | `llama_cpp` for experimental path; default `transformers` |
@@ -128,7 +128,7 @@ Environment names, never values containing secrets:
 | `MEDGEMMA_LLAMA_BINARY` | Pinned local executable absolute path |
 | `MEDGEMMA_TIMEOUT_MS` | Next.js per-request timeout; local experiment used `600000` |
 | `HF_TOKEN` / local HF login | Authorized model access on inference/preparation host |
-| `OPENAI_API_KEY` | Existing OpenAI features |
+| `OPENAI_API_KEY` | Optional audio transcription, transcript documentation, and explicit research comparisons; not image-only application analysis |
 | `AURA_DATA_DIR` | Isolated demo storage location |
 
 Follow `docs/medgemma.md` for full setup rather than copying the owner's environment. Each teammate needs their own model access and local configuration. Do not distribute credentials or assume the owner's model access authorizes someone else's account. The serving and converter Python environments are separate; do not downgrade the default Transformers environment to match the old converter dependencies.
@@ -202,6 +202,23 @@ Only after the owner confirms the real live run is wanted (it is slow and uses t
 
 Even on success, the stand-in evidence above is not MedGemma evidence, quantized CPU output can differ from full-precision output, and the experimental runtime label and provenance must stay attached to results.
 
+## Update, October 24, 2026: Unraid Q8 service deployed
+
+The home Unraid 7.1.4 server now runs the authenticated SpotCheckMD wrapper
+with the official MedGemma 1.5 4B revision, Q8_0 GGUF text weights, F16 vision
+projector, pinned CUDA `llama.cpp`, one inference slot, and hybrid CPU/GPU
+execution on a Quadro P2000. The service is isolated in Docker, binds only to
+host loopback at port 8321, and is reachable inside the tailnet at
+`https://f-15.tail1297e1.ts.net/`. Model files and the API key remain outside
+the repository.
+
+One authorized SCIN image-only request passed the complete remote integration
+path in about 52.0 seconds. Peak sampled use was 3.057 GiB container RAM,
+3,690 MiB GPU memory, and 955% container CPU. The owner asked to stop testing
+after that image passed, so the same-image context variant was not run on the
+server. This is technical integration evidence for one input, not clinical
+validation. See `deploy/unraid/README.md` for operations and reboot recovery.
+
 ## Known limits and architectural direction
 
 Anonymous cookies and QR capabilities are not physician authentication. A typed clinician name does not prove identity; paired sessions can review/approve. Storage is local JSON/media with a process-local lock, unsuitable for multiple replicas. There is no real EHR connector, durable job queue, instant remote cancellation, validated conflict detector, full immutable evidence history, or validated specialty framework.
@@ -229,4 +246,4 @@ Regenerate shared contracts with `npm run generate:contracts` after intentional 
 
 ## Suggested message to accompany this file
 
-> Read the attached SpotCheckMD handoff as project context, then inspect the feature branch and AGENTS.md. Our current assigned task is: [insert teammate task]. Before changing code, summarize the relevant current behavior and proposed change. Preserve safety/review gates, other teammates' work, and the distinction between implemented, mock-tested, and live-verified features. Do not assume the experimental MedGemma CPU path works: both real synthetic requests failed. Use a dedicated branch and PR, and follow our current instructions about whether testing should resume.
+> Read the attached SpotCheckMD handoff as project context, then inspect the feature branch and AGENTS.md. Our current assigned task is: [insert teammate task]. Before changing code, summarize the relevant current behavior and proposed change. Preserve safety/review gates, other teammates' work, and the distinction between implemented, mock-tested, and live-verified features. Local SCIN integration and one remote Unraid Q8 image-only request have passed, but neither establishes clinical validity. Use a dedicated branch and PR, and follow our current instructions about whether testing should resume.

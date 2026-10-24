@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import QRCode from "qrcode";
 import { Activity, ArrowLeft, Camera, Check, ChevronRight, Clipboard, FileText, ImagePlus, Link2, LoaderCircle, Mic, ScanLine, ShieldCheck, Sparkles, Square, TriangleAlert, Trash2, Upload, X, ZoomIn } from "lucide-react";
 import { PATIENTS, composeNote, reviewBlockers, sectionLabels, type Encounter, type Finding } from "@/lib/domain";
@@ -25,6 +25,7 @@ export default function Dashboard() {
   const [stage, setStage] = useState<Stage>("patients");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [dropTarget, setDropTarget] = useState<"image" | "audio" | null>(null);
   const [pairUrl, setPairUrl] = useState("");
   const [qr, setQr] = useState("");
   const [photoZooms, setPhotoZooms] = useState<Record<string, number>>({});
@@ -227,6 +228,34 @@ export default function Dashboard() {
       setMessage(kind === "image" ? "Image saved to the fictional encounter. Review the quality check before analysis." : "Audio captured. Run analysis to create a transcript and suggested findings.");
     } catch (error) { setMessage((error as Error).message); } finally { setBusy(false); }
   }
+  function handleFileDragOver(event: DragEvent<HTMLDivElement>, kind: "image" | "audio") {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDropTarget(kind);
+  }
+
+  function handleFileDragLeave(event: DragEvent<HTMLDivElement>, kind: "image" | "audio") {
+    const nextTarget = event.relatedTarget;
+    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+      setDropTarget(current => current === kind ? null : current);
+    }
+  }
+
+  function handleFileDrop(event: DragEvent<HTMLDivElement>, kind: "image" | "audio") {
+    event.preventDefault();
+    event.stopPropagation();
+    setDropTarget(null);
+
+    if (busy) return;
+    if (!current?.consent || !current.patientConfirmed) {
+      setMessage("Confirm the patient and consent before uploading files.");
+      return;
+    }
+
+    const file = event.dataTransfer.files[0];
+    if (file) void upload(file, kind);
+  }
+
   async function openCamera() {
     if (!navigator.mediaDevices?.getUserMedia) {
       setMessage("Camera access is unavailable. Use HTTPS or localhost in a supported browser.");
@@ -362,7 +391,59 @@ export default function Dashboard() {
         <div className={`${card} mb-6 flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5`}><div className="flex items-center gap-3"><span className="flex size-11 items-center justify-center rounded-xl bg-teal-100 font-bold text-teal-800">{patient?.initials}</span><div><p className="text-sm font-semibold">{patient?.name} <span className="ml-1 rounded bg-amber-50 px-1.5 py-1 text-[9px] uppercase text-amber-800">Fictional</span></p><p className="text-xs text-slate-500">{patient?.record} · {patient?.detail} · Encounter {current.id.slice(0, 8)}</p></div></div><div className="flex gap-2 text-xs font-semibold"><button onClick={() => setStage("capture")} className={`rounded-lg px-3 py-2 ${stage === "capture" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>1 · Capture</button><button onClick={() => setStage("review")} className={`rounded-lg px-3 py-2 ${stage === "review" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>2 · Review</button></div></div>
         {stage === "capture" && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
           <div className="space-y-6"><ClinicalContextEditor encounter={current} disabled={busy || recording} onSave={context => void act("context", { context })} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Confirm before capture</h2><p className="mt-2 text-xs leading-5 text-slate-500">In a real deployment, QR pairing would require clinician authentication and an independently verified patient identity. This local demo uses fictional records only.</p><div className="mt-5 space-y-3"><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.patientConfirmed} onChange={e => void act("confirm", { confirmed: e.target.checked, consent: current.consent })} className="size-4 accent-teal-700" /> Patient and encounter confirmed</label><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.consent} onChange={e => void act("confirm", { confirmed: current.patientConfirmed, consent: e.target.checked })} className="size-4 accent-teal-700" /> All participants consented to recording and processing</label></div><button disabled={busy} onClick={() => void act("pair")} className={`${button} mt-5 border border-teal-200 bg-teal-50 text-teal-800`}><Link2 size={15} /> Create one-use QR link</button>{pairUrl && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs text-slate-600">Scan this QR on a phone within 5 minutes. Anyone holding it can open this fictional encounter.</p>{qr && <img src={qr} alt="One-use pairing QR code" className="my-3 h-48 w-48 rounded bg-white" />}<a className="break-all text-xs text-teal-700 underline" href={pairUrl}>{pairUrl}</a></div>}</section>
-          <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><Mic size={19} className="text-teal-700" /> Encounter audio</h2><div className="my-5 flex h-16 items-center justify-center gap-1 rounded-xl bg-teal-50" aria-hidden="true">{Array.from({ length: 33 }, (_, i) => <span key={i} className={`w-1.5 rounded-full bg-teal-500 ${recording ? "audio-bar-active" : ""}`} style={{ height: `${10 + (i * 13 + i * i * 3) % 42}px`, animationDelay: `${i * -42}ms` }} />)}</div><p className="mb-4 text-xs text-slate-500">{recording ? `Recording ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "Audio is captured only after you start recording."}</p><button disabled={busy || !current.consent || !current.patientConfirmed} onClick={() => recording ? stopRecording() : void startRecording()} className={`${button} w-full bg-teal-800 text-white hover:bg-teal-700`}>{recording ? <Square size={16} /> : <Mic size={16} />}{recording ? "Stop and save recording" : "Start recording"}</button><p className="mt-3 text-[11px] leading-5 text-slate-500">Use short fictional dialogue. Speaker identity and patient statements must be checked during review.</p></section></div>
+          <section className={card + " p-5 sm:p-6"}>
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Mic size={19} className="text-teal-700" />
+              Encounter audio
+            </h2>
+            <div
+              className="my-5 flex h-16 items-center justify-center gap-1 rounded-xl bg-teal-50"
+              aria-hidden="true"
+            >
+              {Array.from({ length: 33 }, (_, index) => (
+                <span
+                  key={index}
+                  className={
+                    "w-1.5 rounded-full bg-teal-500 " +
+                    (recording ? "audio-bar-active" : "")
+                  }
+                  style={{
+                    height: String(10 + (index * 13 + index * index * 3) % 42) + "px",
+                    animationDelay: String(index * -42) + "ms",
+                  }}
+                />
+              ))}
+            </div>
+            <p className="mb-4 text-xs text-slate-500">
+              {recording
+                ? "Recording " + Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0")
+                : "Audio is captured only after you start recording."}
+            </p>
+            <button
+              disabled={busy || !current.consent || !current.patientConfirmed}
+              onClick={() => recording ? stopRecording() : void startRecording()}
+              className={button + " w-full bg-teal-800 text-white hover:bg-teal-700"}
+            >
+              {recording ? <Square size={16} /> : <Mic size={16} />}
+              {recording ? "Stop and save recording" : "Start recording"}
+            </button>
+            <p className="mt-3 text-[11px] leading-5 text-slate-500">
+              Use short fictional dialogue. Speaker identity and patient statements must be checked during review.
+            </p>
+            <div
+              onDragOver={event => handleFileDragOver(event, "audio")}
+              onDragLeave={event => handleFileDragLeave(event, "audio")}
+              onDrop={event => handleFileDrop(event, "audio")}
+              className={
+                "mt-4 rounded-xl border-2 border-dashed p-4 text-center text-xs transition " +
+                (dropTarget === "audio"
+                  ? "border-teal-600 bg-teal-50 text-teal-800"
+                  : "border-slate-300 text-slate-500")
+              }
+            >
+              {dropTarget === "audio" ? "Release to upload audio" : "Or drag an audio file here"}
+            </div>
+          </section></div>
           <section className={card + " p-5 sm:p-6"}>
             <h2 className="flex items-center gap-2 text-base font-semibold">
               <Camera size={19} className="text-teal-700" />
@@ -399,6 +480,20 @@ export default function Dashboard() {
                 <Upload size={16} />
                 Upload
               </button>
+            </div>
+
+            <div
+              onDragOver={event => handleFileDragOver(event, "image")}
+              onDragLeave={event => handleFileDragLeave(event, "image")}
+              onDrop={event => handleFileDrop(event, "image")}
+              className={
+                "mt-3 rounded-xl border-2 border-dashed p-4 text-center text-xs transition " +
+                (dropTarget === "image"
+                  ? "border-teal-600 bg-teal-50 text-teal-800"
+                  : "border-slate-300 text-slate-500")
+              }
+            >
+              {dropTarget === "image" ? "Release to upload image" : "Or drag an image file here"}
             </div>
 
             {cameraOpen && (

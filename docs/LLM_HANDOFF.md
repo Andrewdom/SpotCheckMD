@@ -61,7 +61,7 @@ Fictional encounter + confirmation/consent
   -> normalized images / recorded audio / saved encounter context
   -> audio transcription (existing OpenAI path, when configured)
   -> each image + quality warnings + source IDs + transcript windows
-       -> explicitly selected image provider (GPT-4o or MedGemma)
+       -> default application image provider (MedGemma)
        -> shared schema / source / evidence checks
        -> pending visual observations, contextual history, limitations/conflicts
   -> separate transcript documentation path -> pending spoken findings
@@ -70,7 +70,7 @@ Fictional encounter + confirmation/consent
   -> idempotent simulated export
 ```
 
-- GPT-4o remains the default image provider; `IMAGE_ANALYSIS_PROVIDER=medgemma` opts into MedGemma. Provider errors do not trigger an automatic model fallback.
+- MedGemma is the default and only image provider in the normal application workflow. Provider errors do not trigger an automatic model fallback. The GPT-4o adapter remains exported for explicit research comparisons.
 - The official model identifier is `google/medgemma-1.5-4b-it`. No model training or fine-tuning was performed. Transformers remains its default backend; native CPU quantization is explicit.
 - Existing audio transcription uses the code's `gpt-transcribe` identifier; GPT-4o handles separate transcript documentation. These identifiers do not prove live account/model availability. MedGemma image-only analysis does not require an OpenAI key; audio/transcript paths do.
 - Each image is processed separately. Image findings cite the exact image; transcript citations are context, not visual proof. Visual observations enter Objective; generated contextual history is not silently duplicated into SOAP as a verified image finding.
@@ -120,7 +120,7 @@ Environment names, never values containing secrets:
 
 | Setting | Role |
 | --- | --- |
-| `IMAGE_ANALYSIS_PROVIDER` | `medgemma` to opt in; default `openai` |
+| `IMAGE_ANALYSIS_PROVIDER` | Optional explicit `medgemma`; unset also selects MedGemma |
 | `MEDGEMMA_URL` | Wrapper base URL; loopback locally, HTTPS off loopback |
 | `MEDGEMMA_API_KEY` | Shared secret in Next.js and wrapper environments |
 | `MEDGEMMA_BACKEND` | `llama_cpp` for experimental path; default `transformers` |
@@ -128,7 +128,7 @@ Environment names, never values containing secrets:
 | `MEDGEMMA_LLAMA_BINARY` | Pinned local executable absolute path |
 | `MEDGEMMA_TIMEOUT_MS` | Next.js per-request timeout; local experiment used `600000` |
 | `HF_TOKEN` / local HF login | Authorized model access on inference/preparation host |
-| `OPENAI_API_KEY` | Existing OpenAI features |
+| `OPENAI_API_KEY` | Optional audio transcription, transcript documentation, and explicit research comparisons; not image-only application analysis |
 | `AURA_DATA_DIR` | Isolated demo storage location |
 
 Follow `docs/medgemma.md` for full setup rather than copying the owner's environment. Each teammate needs their own model access and local configuration. Do not distribute credentials or assume the owner's model access authorizes someone else's account. The serving and converter Python environments are separate; do not downgrade the default Transformers environment to match the old converter dependencies.

@@ -9,10 +9,12 @@ export function medgemmaProvider(fetcher: typeof fetch = fetch): ImageProvider {
     const endpoint = process.env.MEDGEMMA_URL;
     const key = process.env.MEDGEMMA_API_KEY;
     if (!endpoint || !key) throw new AppError(503, "MedGemma is not configured. Set its service URL and shared API key; no fallback was used.");
-    const url = new URL(endpoint);
-    if (url.username || url.password || url.search || url.hash || (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) throw new AppError(503, "MedGemma requires HTTPS except on loopback.");
+    let url: URL;
+    try { url = new URL(endpoint); }
+    catch { throw new AppError(503, "MedGemma service URL is invalid; no fallback was used."); }
+    if (url.username || url.password || url.search || url.hash || (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) throw new AppError(503, "MedGemma requires HTTPS except on loopback; no fallback was used.");
     const timeout = Number(process.env.MEDGEMMA_TIMEOUT_MS || 120000);
-    if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 600000) throw new AppError(503, "Invalid MedGemma timeout configuration.");
+    if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 600000) throw new AppError(503, "MedGemma timeout configuration is invalid; no fallback was used.");
     try {
       const response = await fetcher(new URL("analyze", endpoint.endsWith("/") ? endpoint : `${endpoint}/`), {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(timeout),
@@ -41,7 +43,9 @@ export function medgemmaProvider(fetcher: typeof fetch = fetch): ImageProvider {
       }
     } catch (error) {
       if (error instanceof AppError) throw error;
-      throw new AppError(502, "MedGemma timed out, was unreachable, or returned invalid evidence/JSON. No fallback was used.");
+      if (error instanceof DOMException && error.name === "TimeoutError") throw new AppError(502, "MedGemma timed out; no fallback was used.");
+      if (error instanceof TypeError) throw new AppError(502, "MedGemma is unreachable. Check Tailscale and the configured service URL; no fallback was used.");
+      throw new AppError(502, "MedGemma returned invalid evidence or JSON; no fallback was used.");
     }
   } };
 }
@@ -55,8 +59,7 @@ export function openaiImageProvider(): ImageProvider {
   } };
 }
 export function configuredImageProvider(): ImageProvider {
-  const name = process.env.IMAGE_ANALYSIS_PROVIDER || "openai";
-  if (name === "medgemma") return medgemmaProvider();
-  if (name === "openai") return openaiImageProvider();
-  throw new AppError(503, "Unknown IMAGE_ANALYSIS_PROVIDER. Choose medgemma or openai explicitly.");
+  const name = process.env.IMAGE_ANALYSIS_PROVIDER;
+  if (!name || name === "medgemma") return medgemmaProvider();
+  throw new AppError(503, "MedGemma is the only application image provider. Set IMAGE_ANALYSIS_PROVIDER=medgemma or remove it; no fallback was used.");
 }

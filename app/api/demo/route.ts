@@ -264,7 +264,8 @@ async function analyze(request: Request) {
       e.imageAnalyses = [...(e.imageAnalyses || []), ...result.analyses];
       e.analysisWarnings = result.warnings; e.warningsAcknowledged = false;
       e.analysis = result.findings.length || result.analyses.length ? "ready" : "failed";
-      e.analysisError = e.analysis === "failed" ? "No new findings were generated. Review analysis warnings or add a supported manual observation." : "";
+      const medgemmaFailure = result.warnings.find(warning => warning.includes("MedGemma"));
+      e.analysisError = e.analysis === "failed" ? medgemmaFailure || "No new findings were generated. Review analysis warnings or add a supported manual observation." : "";
       e.activeAnalysis = undefined;
       e.model = [...new Set([...result.analyses.map(a => a.model), ...(result.findings.some(f => f.origin === "spoken") ? ["gpt-4o (transcript)"] : [])])].join(" + ");
       e.promptVersion = PROMPT_VERSION;

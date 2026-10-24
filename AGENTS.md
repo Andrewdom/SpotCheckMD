@@ -18,6 +18,8 @@ Read `README.md`, `evals/README.md`, and the relevant implementation before chan
 - `scripts/smoke.cjs`: synthetic HTTP workflow checks; requires a running app. `scripts/evaluate.mjs`: aggregates supplied human-reviewed counts; it does not run models or establish clinical accuracy.
 - `lib/image-analysis/`: versioned schema, per-image providers, transcript windows, orchestration and comparison metrics. `services/medgemma/`: optional private Python inference service using the official pretrained model. `contracts/`: generated shared response schema/instructions; regenerate with `npm run generate:contracts`.
 - `services/medgemma/local_runtime.py`: explicit experimental `MEDGEMMA_BACKEND=llama_cpp` CPU option, owning an authenticated loopback child process. `prepare_local.py` converts authorized official safetensors with pinned tools; source/conversion/runtime revisions and artifact hashes must remain attached to quantized results. Keep weights, model caches, private configuration and verification outputs outside source control. Do not substitute a third-party model or erase quantization provenance. The original Transformers backend remains the default.
+- `lib/ehr/` and `app/api/ehr/route.ts`: owner-scoped fictional charts, reviewed history snapshots, and atomic local note submission with receipts and amendments. See `docs/ehr-demo.md`. Keep imported history distinct from transcript/image evidence and preserve original saved notes.
+- `lib/transcription/` and `app/api/transcription-token/route.ts`: provider-selected OpenAI/AssemblyAI post-visit transcription, immutable timestamped artifacts, medical key terms, speaker-role confirmation and provisional AssemblyAI streaming captions. See `docs/transcription.md`. Keep permanent provider keys server-side; live captions are never approved-note evidence.
 - `scripts/prepare_scin.py` prepares a deterministic 1–10 case SCIN integration set in a new private directory. `scripts/verify-scin-medgemma.ts` runs one explicitly selected local image-only or image-plus-context request. SCIN photographs, metadata, manifests, model output and reports stay outside source control and remain subject to the SCIN Data Use License. These are integration inputs, not clinical ground truth.
 - No real EHR adapter, clinician authentication, durable job queue, clinically validated specialty modules, CLEAR integration, or clinical evaluation results are present. Model weights have not been exercised by the mock test suite.
 
@@ -84,3 +86,13 @@ Run `node scripts/evaluate.mjs <reviewed-cases.json>` only with explicitly label
 The MedGemma service/runtime tests run with `python -m pytest services/medgemma -q` using the separate test requirements. They inject fake generators/processes and require no GPU or model token. Mock success is not evidence that real model generation or deployment works. Never enable a fake generator via a production environment flag; tests inject it in process. `scripts/verify-local-medgemma.ts` makes explicit real requests using a generated non-patient diagram and fictional context; contract success is technical verification, not clinical validation. Preserve failures and report which runtime was actually exercised.
 
 SCIN integration requires explicit `--run-download`, `--accept-scin-license`, and `--run-live` flags. Do not commit SCIN data or results, attempt re-identification, transmit images to an external provider, include dermatologist condition labels in model input, or omit failed cases. Start with one local image-only request; run the context variant and expand to 5–10 cases only after that request passes the full Python and TypeScript contract.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

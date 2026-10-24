@@ -165,3 +165,11 @@ test("API: audio-only never invokes MedGemma", async () => {
   s.e = (await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision })).body.encounter;
   assert.equal(providerRequests, before); assert.equal(s.e.findings[0].origin, "spoken");
 });
+
+test("API: audio-only explains a transcription failure instead of reporting generic empty findings", async () => {
+  const s = await session(); await s.upload("audio"); failTranscription = true;
+  s.e = (await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision })).body.encounter; failTranscription = false;
+  assert.equal(s.e.analysis, "failed");
+  assert.match(s.e.analysisError, /audio was saved, but transcription failed/i);
+  assert.ok(s.e.analysisWarnings!.some(warning => /Audio transcription failed/.test(warning)));
+});

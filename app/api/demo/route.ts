@@ -1,7 +1,7 @@
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { assessImage, suggest, transcribe } from "@/lib/analysis";
+import { assessImage, imageUploadLimitBytes, suggest, transcribe } from "@/lib/analysis";
 import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Source } from "@/lib/domain";
 import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, createSession, dataRoot, digest, mediaPath, respondError, transaction, uid } from "@/lib/store";
 
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
         db.sessions = db.sessions.filter(session => session.encounterId !== encounterId);
 
         const removedMediaIds = [...new Set(
-          encounter.sources.map(source => source.mediaId).filter((id): id is string => Boolean(id)),
+          encounter.sources.flatMap(source => [source.mediaId, source.previewMediaId]).filter((id): id is string => Boolean(id)),
         )];
         return removedMediaIds.filter(mediaId =>
           !db.encounters.some(item => item.sources.some(source => source.mediaId === mediaId)),
@@ -122,12 +122,10 @@ export async function POST(request: Request) {
         encounter.activeAnalysis = undefined;
         changed(encounter, "image removed");
 
-        return { encounter: safe(encounter), mediaId: source.mediaId };
+        return { encounter: safe(encounter), mediaIds: [source.mediaId, source.previewMediaId].filter((value): value is string => Boolean(value)) };
       });
 
-      if (result.mediaId) {
-        await unlink(mediaPath(result.mediaId)).catch(() => {});
-      }
+      await Promise.all(result.mediaIds.map(mediaId => unlink(mediaPath(mediaId)).catch(() => {})));
       return Response.json({ encounter: result.encounter });
     }
 
@@ -187,6 +185,9 @@ export async function POST(request: Request) {
 }
 
 async function upload(request: Request) {
+  const contentLength = Number(request.headers.get("content-length"));
+  const maximumRequestBytes = Math.max(imageUploadLimitBytes(), 20 * 1024 * 1024) + 1024 * 1024;
+  if (Number.isFinite(contentLength) && contentLength > maximumRequestBytes) throw new AppError(413, "The upload request exceeds the configured media limit.");
   const form = await request.formData();
   const id = required(form.get("encounterId"), 32);
   const revision = Number(form.get("revision"));
@@ -195,7 +196,9 @@ async function upload(request: Request) {
   const kind = form.get("kind");
   const image = kind === "image";
   if (!image && kind !== "audio") throw new AppError(400, "Choose audio or image.");
-  if (file.size === 0 || file.size > (image ? 10 : 20) * 1024 * 1024) throw new AppError(413, "File is empty or exceeds the demo size limit.");
+  const uploadLimit = image ? imageUploadLimitBytes() : 20 * 1024 * 1024;
+  if (file.size === 0) throw new AppError(400, "The selected file is empty.");
+  if (file.size > uploadLimit) throw new AppError(413, `The selected ${image ? "image" : "audio file"} exceeds the configured ${Math.round(uploadLimit / 1024 / 1024)} MB limit.`);
   if (image ? !["image/jpeg", "image/png"].includes(file.type) : !["audio/webm", "audio/mp4", "audio/wav", "audio/mpeg", "audio/ogg"].includes(file.type)) throw new AppError(415, "Unsupported media format.");
   await transaction(db => {
     auth(db, request, id);
@@ -205,7 +208,7 @@ async function upload(request: Request) {
   });
   const original = Buffer.from(await file.arrayBuffer());
   const assessment = image ? await assessImage(original) : null;
-  const mediaId = uid(), sourceId = uid();
+  const mediaId = uid(), previewMediaId = image ? uid() : undefined, sourceId = uid();
   const bytes = assessment?.normalized || original;
   const encounter = await transaction(async db => {
     auth(db, request, id);
@@ -214,9 +217,10 @@ async function upload(request: Request) {
     if (!e.consent || !e.patientConfirmed) throw new AppError(400, "Confirm the patient and capture consent first.");
     if (!image && e.sources.some(s => s.kind === "audio")) throw new AppError(400, "This demo supports one recording per encounter. Create another encounter to record again.");
     if (e.sources.length >= 8) throw new AppError(400, "This demo supports up to eight sources per encounter.");
-    const source: Source = { id: sourceId, kind: image ? "image" : "audio", label: image ? `Photo ${e.sources.filter(s => s.kind === "image").length + 1}` : "Encounter audio", mediaId, mime: image ? "image/jpeg" : file.type, quality: assessment?.quality, width: assessment?.width, height: assessment?.height, createdAt: new Date().toISOString() };
+    const source: Source = { id: sourceId, kind: image ? "image" : "audio", label: image ? `Photo ${e.sources.filter(s => s.kind === "image").length + 1}` : "Encounter audio", mediaId, previewMediaId, mime: image ? assessment!.mime : file.type, originalMime: image ? file.type : undefined, byteSize: image ? bytes.length : file.size, quality: assessment?.quality, width: assessment?.width, height: assessment?.height, imagePreparation: image ? "oriented_lossless_png_metadata_stripped" : undefined, createdAt: new Date().toISOString() };
     await mkdir(dataRoot, { recursive: true, mode: 0o700 });
     await writeFile(mediaPath(mediaId), bytes, { flag: "wx", mode: 0o600 });
+    if (previewMediaId) await writeFile(mediaPath(previewMediaId), assessment!.preview, { flag: "wx", mode: 0o600 });
     e.sources.push(source); e.findings = []; e.conflicts = []; e.imageAnalyses = []; e.analysisWarnings = []; e.warningsAcknowledged = false; e.activeAnalysis = undefined; e.analysis = "none"; e.analysisError = ""; changed(e, "media added");
     return safe(e);
   });

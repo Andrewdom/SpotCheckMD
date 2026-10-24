@@ -25,7 +25,7 @@ services:
       - /mnt/user/appdata/spotcheckmd-medgemma/models:/models:ro
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=0700
+      - /tmp:rw,noexec,nosuid,size=320m,uid=10001,gid=10001,mode=0700
     security_opt:
       - no-new-privileges:true
     cap_drop:

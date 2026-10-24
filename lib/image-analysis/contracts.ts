@@ -34,14 +34,20 @@ export const imageAnalysisSchema = z.object({
 }).strict();
 export type ImageAnalysis = z.infer<typeof imageAnalysisSchema>;
 export type TranscriptContext = { id: string; text: string; start: number; end: number };
-export type ImageInput = { id: string; bytes: Buffer; quality: Quality };
+export type ImageInput = { id: string; bytes: Buffer; mime: "image/jpeg" | "image/png"; width?: number; height?: number; quality: Quality };
 export type ImageRequest = { image: ImageInput; transcript: TranscriptContext | null; context: ClinicalContext };
 export const imageRuntimeSchema = z.object({
   engine: z.literal("llama.cpp"), engineRevision: z.string().regex(/^[0-9a-f]{40}$/),
   converterRevision: z.string().regex(/^[0-9a-f]{40}$/), quantization: z.enum(["Q4_K_M", "Q8_0"]),
   modelSha256: z.string().regex(/^[0-9a-f]{64}$/), projectorSha256: z.string().regex(/^[0-9a-f]{64}$/),
 }).strict();
-export type ImageResult = { runtime?: z.infer<typeof imageRuntimeSchema>; inputContext?: ClinicalContext; inputTranscriptSourceId?: string | null; analysis: ImageAnalysis; model: string; modelRevision: string; latencyMs: number; contextRange: { start: number; end: number } | null };
+export const imageProcessingSchema = z.object({
+  transport: z.literal("multipart"), receivedMime: z.enum(["image/jpeg", "image/png"]),
+  receivedBytes: z.number().int().positive(), decodedWidth: z.number().int().positive(), decodedHeight: z.number().int().positive(),
+  modelInputWidth: z.literal(896), modelInputHeight: z.literal(896), visionTokens: z.literal(256),
+  modelResizesInput: z.literal(true), metadataPresentAtService: z.boolean(),
+}).strict();
+export type ImageResult = { runtime?: z.infer<typeof imageRuntimeSchema>; imageProcessing?: z.infer<typeof imageProcessingSchema>; inputContext?: ClinicalContext; inputTranscriptSourceId?: string | null; analysis: ImageAnalysis; model: string; modelRevision: string; latencyMs: number; contextRange: { start: number; end: number } | null };
 export type ImageProvider = { id: string; analyze(input: ImageRequest): Promise<ImageResult> };
 export const PROMPT_VERSION = "contextual-image-v1";
 

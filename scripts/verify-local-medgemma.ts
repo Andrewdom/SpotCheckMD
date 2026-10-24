@@ -14,13 +14,13 @@ async function main() {
   await mkdir(output, { mode: 0o700 }); // Refuse to overwrite a previous run.
   const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800"><rect width="800" height="800" fill="#eeeeee"/><circle cx="270" cy="360" r="120" fill="#cc6633"/><rect x="460" y="240" width="180" height="240" fill="#3366aa"/><text x="100" y="650" font-size="24">SYNTHETIC DIAGRAM - NO PATIENT</text></svg>');
   const source = await assessImage(await sharp(svg).jpeg().toBuffer());
-  await writeFile(path.join(output, "synthetic-diagram.jpg"), source.normalized, { flag: "wx", mode: 0o600 });
+  await writeFile(path.join(output, "synthetic-diagram.png"), source.normalized, { flag: "wx", mode: 0o600 });
   const context: ImageRequest["context"] = { specialty: "general", imageType: "other_2d", anatomicalLocation: "", physicianContext: "This is a synthetic geometric diagram, not a patient photograph. Do not infer anatomy or medical findings." };
   const text = "Clinician: This is a synthetic diagram with colored shapes. Fictional patient: I have no pain.";
   let failed = false;
   for (const variant of ["image-only", "image-and-transcript"]) {
     const started = performance.now();
-    const input: ImageRequest = { image: { id: "synthetic-image", bytes: source.normalized, quality: source.quality }, context,
+    const input: ImageRequest = { image: { id: "synthetic-image", bytes: source.normalized, mime: source.mime, width: source.width, height: source.height, quality: source.quality }, context,
       transcript: variant === "image-only" ? null : { id: "synthetic-transcript", text, start: 0, end: text.length } };
     try {
       const result = await medgemmaProvider().analyze(input);

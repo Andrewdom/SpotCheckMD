@@ -70,7 +70,7 @@ async function main() {
       id: `${selectedCase.id}-transcript`, text: selectedCase.transcript, start: 0, end: selectedCase.transcript.length,
     };
     const request: ImageRequest = {
-      image: { id: `${selectedCase.id}-image`, bytes: assessed.normalized, quality: assessed.quality },
+      image: { id: `${selectedCase.id}-image`, bytes: assessed.normalized, mime: assessed.mime, width: assessed.width, height: assessed.height, quality: assessed.quality },
       transcript, context: selectedCase.context,
     };
     stage = "MedGemma adapter request";

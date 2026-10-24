@@ -15,17 +15,19 @@ npm run dev
 
 Open http://localhost:3000. MedGemma is the application image-analysis provider by default; copy `.env.example` to ignored `.env.local`, obtain the shared server key securely, and connect to the team Tailscale network. Image-only analysis does not require an OpenAI key and never falls back to GPT-4o. `OPENAI_API_KEY` remains optional for audio transcription and transcript-derived documentation only. Never commit, upload, or paste credentials. See [MedGemma setup and limitations](docs/medgemma.md). Audio recording requires localhost or HTTPS and browser permission. Mobile `capture="environment"` behavior varies by browser.
 
+JPEG and PNG uploads default to a configurable 50 MB and 60-megapixel limit. SpotCheckMD applies EXIF orientation and stores a metadata-stripped, lossless PNG inference copy at the oriented source dimensions, plus a separate compressed preview. The full-resolution copy reaches the MedGemma service over authenticated multipart transport; MedGemma then normalizes every image to 896 × 896 and 256 vision tokens internally, so this is not native-resolution model processing. HEIC/HEIF is not accepted because decoder support is not consistent across the supported development machines.
+
 Intel Macs can explicitly select the [experimental quantized CPU backend](docs/medgemma.md#experimental-intel-mac--native-cpu-backend). It converts authorized official weights locally and records conversion/runtime provenance. This is a separate runtime from the default Transformers service; quantization may change output quality and does not establish clinical validity.
 
 ## Demo journey
 
 1. Choose one of two fictional patient profiles. Confirm the patient and all-party recording/processing consent.
 2. Create a one-use, five-minute QR link and scan it on a phone on the **same reachable host**. For a phone, use an HTTPS tunnel or local network host; `localhost` on a laptop will refer to the phone itself. This prototype has **no clinician authentication**; anyone with the token can view its fictional encounter.
-3. Capture staged images and/or short fictional audio. Photos are normalized with EXIF metadata stripped. Brightness, detail, and resolution heuristics warn when to retake; they cannot certify image quality.
+3. Capture staged images and/or short fictional audio. Photos are EXIF-oriented and stored as metadata-stripped, lossless full-dimension PNG inference copies; the UI uses separate previews. Brightness, detail, and resolution heuristics warn when to retake; they cannot certify image quality.
 4. Save the selected specialty, image type, and any explicitly confirmed location/context, then run analysis. Review the transcript and each atomic suggestion with evidence links, uncertainty/quality flags, and an editable reviewer note. The system flags a basic left/right discrepancy, but humans must check for all other contradictions. Reject findings from photos marked `retake`; explain uncertain or edited findings.
 5. Accept or reject every suggestion, resolve flagged conflicts, acknowledge any partial-analysis warnings, enter a demo clinician name, and approve. Any subsequent change revokes approval. The export button records a **simulation**, never sends anything to an EHR.
 
-Drafts, transcripts, normalized images, and audio are stored in `.aura-data/` on the local server, ignored by git. Delete that directory to remove this demo's stored data. Do not treat this as a privacy/retention policy for real patient records. Server state is a local JSON file with a single-process write lock; it is not safe for multiple server replicas or production. Sessions are anonymous demo cookies; QR codes are temporary encounter capabilities, not identity verification.
+Drafts, transcripts, lossless inference images, preview images, and audio are stored in `.aura-data/` on the local server, ignored by git. Delete that directory to remove this demo's stored data. Do not treat this as a privacy/retention policy for real patient records. Server state is a local JSON file with a single-process write lock; it is not safe for multiple server replicas or production. Sessions are anonymous demo cookies; QR codes are temporary encounter capabilities, not identity verification.
 
 ## Visual algorithm
 

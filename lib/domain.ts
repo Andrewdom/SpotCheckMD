@@ -6,7 +6,8 @@ export type Quality = { status: "usable" | "limited" | "retake"; reasons: string
 export type Source = {
   id: string; kind: "image" | "audio" | "transcript" | "clinician";
   label: string; text?: string; mediaId?: string; start?: number; end?: number;
-  mime?: string;
+  mime?: string; originalMime?: string; previewMediaId?: string; byteSize?: number;
+  imagePreparation?: "oriented_lossless_png_metadata_stripped";
   quality?: Quality; width?: number; height?: number; createdAt: string;
 };
 export type Finding = {

@@ -1,5 +1,4 @@
 """Private, single-worker MedGemma 1.5 service. No model fallback or request logging."""
-import base64
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from io import BytesIO
@@ -12,19 +11,28 @@ import threading
 import time
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jsonschema import Draft202012Validator, ValidationError
-from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field
+from PIL import Image, ImageOps
+from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
 
 MODEL_ID = "google/medgemma-1.5-4b-it"
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "contracts/image-analysis.schema.json").read_text())
 INSTRUCTIONS = (ROOT / "contracts/image-instructions.txt").read_text()
 VALIDATOR = Draft202012Validator(SCHEMA)
-Image.MAX_IMAGE_PIXELS = 40_000_000
+def bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if value < minimum or value > maximum:
+        raise RuntimeError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+MAX_IMAGE_BYTES = bounded_int("MEDGEMMA_MAX_IMAGE_MB", 256, 10, 512) * 1024 * 1024
+MAX_REQUEST_BYTES = MAX_IMAGE_BYTES + 1024 * 1024
+MAX_IMAGE_PIXELS = bounded_int("MEDGEMMA_MAX_IMAGE_PIXELS", 60_000_000, 1_000_000, 100_000_000)
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 diagnostics = logging.getLogger("medgemma.diagnostics")
 
 def describe_failure(error: Exception) -> str:
@@ -62,7 +70,6 @@ class Quality(StrictModel):
 
 class AnalysisRequest(StrictModel):
     imageSourceId: str = Field(min_length=1, max_length=64)
-    imageBase64: str = Field(min_length=1, max_length=14_000_000)
     mime: Literal["image/jpeg", "image/png"]
     quality: Quality
     context: Context
@@ -184,11 +191,18 @@ def create_app(generator=None):
         key = os.getenv("MEDGEMMA_API_KEY", "")
         if len(key) < 16 or not secrets.compare_digest(request.headers.get("authorization", ""), "Bearer " + key):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        declared = request.headers.get("content-length")
+        if declared:
+            try:
+                if int(declared) > MAX_REQUEST_BYTES:
+                    return JSONResponse({"error": "Request too large"}, status_code=413)
+            except ValueError:
+                return JSONResponse({"error": "Invalid content length"}, status_code=400)
         length = 0
         chunks = []
         async for chunk in request.stream():
             length += len(chunk)
-            if length > 15_000_000:
+            if length > MAX_REQUEST_BYTES:
                 return JSONResponse({"error": "Request too large"}, status_code=413)
             chunks.append(chunk)
         request._body = b"".join(chunks)
@@ -204,25 +218,39 @@ def create_app(generator=None):
     @app.get("/health")
     def health():
         return {"status": "ready", "model": MODEL_ID, "modelRevision": app.state.generator.revision,
-                "runtime": getattr(app.state.generator, "runtime", None)}
+                "runtime": getattr(app.state.generator, "runtime", None),
+                "imageInput": {"transport": "multipart", "maxBytes": MAX_IMAGE_BYTES, "maxPixels": MAX_IMAGE_PIXELS,
+                               "modelInputWidth": 896, "modelInputHeight": 896, "visionTokens": 256,
+                               "modelResizesInput": True}}
 
     @app.post("/analyze")
-    def analyze(request: AnalysisRequest):
+    async def analyze(metadata: Annotated[str, Form(max_length=50000)], image: Annotated[UploadFile, File()]):
         if not lock.acquire(blocking=False):
             raise HTTPException(429, "Inference busy; retry explicitly")
         started = time.perf_counter()
         stage = "image decoding"
         output = None
         try:
-            raw = base64.b64decode(request.imageBase64, validate=True)
+            try:
+                analysis_request = AnalysisRequest.model_validate_json(metadata)
+            except (PydanticValidationError, json.JSONDecodeError):
+                raise HTTPException(422, "Invalid analysis request") from None
+            if image.content_type != analysis_request.mime:
+                raise ValueError("Media type mismatch")
+            raw = await image.read(MAX_IMAGE_BYTES + 1)
+            await image.close()
+            if not raw or len(raw) > MAX_IMAGE_BYTES:
+                raise ValueError("Unsupported image size")
             with Image.open(BytesIO(raw)) as original:
-                if original.format not in ("JPEG", "PNG") or original.width * original.height > 2_560_000:
+                expected = "JPEG" if analysis_request.mime == "image/jpeg" else "PNG"
+                if original.format != expected or original.width * original.height > MAX_IMAGE_PIXELS:
                     raise ValueError("Unsupported image")
+                metadata_present = bool(original.getexif()) or bool(getattr(original, "text", {}))
                 original.load()
-                image = original.convert("RGB")
+                model_image = ImageOps.exif_transpose(original).convert("RGB")
             stage = "generation"
-            schema = response_schema(request)
-            output = app.state.generator(image, make_prompt(request, schema), schema).strip()
+            schema = response_schema(analysis_request)
+            output = app.state.generator(model_image, make_prompt(analysis_request, schema), schema).strip()
             stage = "JSON parsing"
             if output.startswith("```json\n") and output.endswith("```"):
                 output = output[8:-3].strip()
@@ -232,13 +260,19 @@ def create_app(generator=None):
             stage = "schema validation"
             VALIDATOR.validate(parsed)
             stage = "evidence validation"
-            result = validate_evidence(parsed, request)
+            result = validate_evidence(parsed, analysis_request)
             response = {"analysis": result, "model": MODEL_ID, "modelRevision": app.state.generator.revision, "latencyMs": (time.perf_counter() - started) * 1000}
+            response["imageProcessing"] = {"transport": "multipart", "receivedMime": analysis_request.mime,
+                "receivedBytes": len(raw), "decodedWidth": model_image.width, "decodedHeight": model_image.height,
+                "modelInputWidth": 896, "modelInputHeight": 896, "visionTokens": 256,
+                "modelResizesInput": True, "metadataPresentAtService": metadata_present}
             runtime = getattr(app.state.generator, "runtime", None)
             if runtime is not None:
                 response["runtime"] = runtime
             return response
         except Exception as error:
+            if isinstance(error, HTTPException):
+                raise
             # Operator-only, content-free diagnosis; the HTTP response stays generic.
             detail = {key: value for key, value in (getattr(app.state.generator, "last_diagnostics", None) or {}).items() if isinstance(value, (int, str))}
             diagnostics.warning("stage=%s error=%s elapsedSeconds=%.1f outputCharacters=%s generator=%s", stage, describe_failure(error), time.perf_counter() - started, len(output) if output is not None else None, detail)

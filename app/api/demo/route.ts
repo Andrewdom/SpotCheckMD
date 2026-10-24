@@ -54,6 +54,33 @@ export async function POST(request: Request) {
     if (action === "analyze") return await analyze(request);
     const body = await request.json();
     const encounterId = required(body.encounterId, 32);
+    if (action === "delete-encounter") {
+      const mediaIds = await transaction(db => {
+        const session = auth(db, request, encounterId);
+        if (session.encounterId) throw new AppError(403, "Paired capture sessions cannot delete encounters.");
+
+        const encounterIndex = db.encounters.findIndex(item => item.id === encounterId);
+        if (encounterIndex < 0) throw new AppError(404, "Encounter not found.");
+        const encounter = db.encounters[encounterIndex];
+        checkRevision(encounter, body.revision);
+
+        db.encounters.splice(encounterIndex, 1);
+        db.pairings = db.pairings.filter(pairing => pairing.encounterId !== encounterId);
+        db.sessions = db.sessions.filter(session => session.encounterId !== encounterId);
+
+        const removedMediaIds = [...new Set(
+          encounter.sources.map(source => source.mediaId).filter((id): id is string => Boolean(id)),
+        )];
+        return removedMediaIds.filter(mediaId =>
+          !db.encounters.some(item => item.sources.some(source => source.mediaId === mediaId)),
+        );
+      });
+
+      await Promise.all(mediaIds.map(mediaId =>
+        unlink(mediaPath(mediaId)).catch(() => {}),
+      ));
+      return Response.json({ deleted: true });
+    }
     if (action === "create") {
       const patient = PATIENTS.find(p => p.id === body.patientId);
       if (!patient) throw new AppError(400, "Choose a fictional demo patient.");

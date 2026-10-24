@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { Activity, ArrowLeft, Camera, Check, ChevronRight, Clipboard, FileText, ImagePlus, Link2, LoaderCircle, Mic, ScanLine, ShieldCheck, Sparkles, Square, TriangleAlert, Upload, X, ZoomIn } from "lucide-react";
+import { Activity, ArrowLeft, Camera, Check, ChevronRight, Clipboard, FileText, ImagePlus, Link2, LoaderCircle, Mic, ScanLine, ShieldCheck, Sparkles, Square, TriangleAlert, Trash2, Upload, X, ZoomIn } from "lucide-react";
 import { PATIENTS, composeNote, reviewBlockers, sectionLabels, type Encounter, type Finding } from "@/lib/domain";
 
 import { ClinicalContextEditor, ImageAnalysisContext } from "@/components/clinical-context";
@@ -21,6 +21,7 @@ async function send(action: string, data: Record<string, unknown> | FormData) {
 export default function Dashboard() {
   const [encounters, setEncounters] = useState<Encounter[]>([]);
   const [current, setCurrent] = useState<Encounter | null>(null);
+  const [encounterToDelete, setEncounterToDelete] = useState<Encounter | null>(null);
   const [stage, setStage] = useState<Stage>("patients");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -194,6 +195,27 @@ export default function Dashboard() {
     try { const result = await send("create", { patientId }); update(result.encounter); setPairUrl(""); setStage("capture"); }
     catch (error) { setMessage((error as Error).message); } finally { setBusy(false); }
   }
+  async function deleteEncounter() {
+    if (!encounterToDelete) return;
+
+    setBusy(true);
+    setMessage("");
+    try {
+      await send("delete-encounter", {
+        encounterId: encounterToDelete.id,
+        revision: encounterToDelete.revision,
+      });
+      setEncounters(previous =>
+        previous.filter(encounter => encounter.id !== encounterToDelete.id),
+      );
+      setEncounterToDelete(null);
+      setMessage("Saved encounter draft deleted.");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function upload(file: File | undefined, kind: "image" | "audio") {
     if (!file || !active.current) return;
     setBusy(true); setMessage("");
@@ -283,7 +305,58 @@ export default function Dashboard() {
       {message && <p role="alert" className="mb-5 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm text-teal-900">{message}</p>}
       {stage === "patients" && <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
         <section className={`${card} p-6`}><h2 className="flex items-center gap-2 text-lg font-semibold"><ScanLine size={19} className="text-teal-700" /> Start with a fictional patient</h2><p className="mt-2 text-xs text-slate-500">No identity check or clinical system is connected in this demo.</p><div className="mt-6 space-y-3">{PATIENTS.map(p => <button disabled={busy} key={p.id} onClick={() => void create(p.id)} className="flex w-full items-center gap-4 rounded-xl border border-slate-200 p-4 text-left transition hover:border-teal-400 hover:bg-teal-50"><span className="flex size-11 items-center justify-center rounded-xl bg-teal-100 text-sm font-bold text-teal-800">{p.initials}</span><span className="flex-1"><strong className="block text-sm">{p.name}</strong><small className="text-slate-500">{p.record} · {p.detail}</small></span><ChevronRight size={16} /></button>)}</div></section>
-        <section className={`${card} p-6`}><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText size={19} className="text-teal-700" /> Saved encounter drafts</h2><div className="mt-5 space-y-3">{encounters.length ? encounters.map(e => <button key={e.id} onClick={() => { update(e); setStage(e.findings.length ? "review" : "capture"); }} className="flex w-full items-center justify-between rounded-xl border border-slate-200 p-4 text-left hover:border-teal-400"><span><strong className="block text-sm">{PATIENTS.find(p => p.id === e.patientId)?.name}</strong><small className="text-slate-500">{new Date(e.createdAt).toLocaleString()} · {e.approval ? "Approved" : "Needs review"}</small></span><ChevronRight size={16} /></button>) : <p className="rounded-xl bg-slate-50 p-6 text-sm text-slate-500">No encounters yet. Choose a patient to begin.</p>}</div></section>
+        <section className={card + " p-6"}>
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <FileText size={19} className="text-teal-700" />
+            Saved encounter drafts
+          </h2>
+          <div className="mt-5 space-y-3">
+            {encounters.length ? encounters.map(encounter => (
+              <div
+                key={encounter.id}
+                className="flex items-center gap-2 rounded-xl border border-slate-200 p-2 transition hover:border-teal-400"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    update(encounter);
+                    setStage(encounter.findings.length ? "review" : "capture");
+                  }}
+                  className="flex min-w-0 flex-1 items-center justify-between rounded-lg p-2 text-left"
+                >
+                  <span className="min-w-0">
+                    <strong className="block truncate text-sm">
+                      {PATIENTS.find(patient => patient.id === encounter.patientId)?.name}
+                    </strong>
+                    <small className="block text-slate-500">
+                      {new Date(
+                        encounter.audit[encounter.audit.length - 1]?.at || encounter.createdAt,
+                      ).toLocaleString()}
+                    </small>
+                    <small className="block text-[11px] text-slate-400">
+                      Last edited · {encounter.approval ? "Approved" : "Needs review"}
+                    </small>
+                  </span>
+                  <ChevronRight size={16} className="ml-3 shrink-0" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={"Delete draft for " + (PATIENTS.find(patient => patient.id === encounter.patientId)?.name || "patient")}
+                  title="Delete draft"
+                  disabled={busy}
+                  onClick={() => setEncounterToDelete(encounter)}
+                  className="rounded-lg p-2 text-slate-500 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
+                >
+                  <Trash2 size={17} />
+                </button>
+              </div>
+            )) : (
+              <p className="rounded-xl bg-slate-50 p-6 text-sm text-slate-500">
+                No encounters yet. Choose a patient to begin.
+              </p>
+            )}
+          </div>
+        </section>
       </div>}
       {current && stage !== "patients" && <>
         <div className={`${card} mb-6 flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5`}><div className="flex items-center gap-3"><span className="flex size-11 items-center justify-center rounded-xl bg-teal-100 font-bold text-teal-800">{patient?.initials}</span><div><p className="text-sm font-semibold">{patient?.name} <span className="ml-1 rounded bg-amber-50 px-1.5 py-1 text-[9px] uppercase text-amber-800">Fictional</span></p><p className="text-xs text-slate-500">{patient?.record} · {patient?.detail} · Encounter {current.id.slice(0, 8)}</p></div></div><div className="flex gap-2 text-xs font-semibold"><button onClick={() => setStage("capture")} className={`rounded-lg px-3 py-2 ${stage === "capture" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>1 · Capture</button><button onClick={() => setStage("review")} className={`rounded-lg px-3 py-2 ${stage === "review" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>2 · Review</button></div></div>
@@ -629,6 +702,53 @@ export default function Dashboard() {
         </div><div className="space-y-6"><section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><FileText size={19} className="text-teal-700" /> SOAP draft</h2><p className="mt-2 text-xs text-slate-500">{current.approval ? "Approved snapshot" : "Pending suggestions shown; rejected items omitted"}</p><div className="mt-5 space-y-5">{(["S", "O", "A", "P"] as const).map(section => <div key={section}><h3 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase tracking-[.15em] text-teal-800">{section} · {sectionLabels[section]}</h3><div className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-600">{current.findings.filter(f => f.section === section && (current.approval ? f.review === "accepted" : f.review !== "rejected")).map(f => <p key={f.id} className="mb-2">{!current.approval && f.review === "pending" && <span className="mr-2 rounded bg-amber-50 px-2 py-1 text-[10px] text-amber-700">PENDING</span>}{f.certainty !== "observed" && <span>[{f.certainty.replaceAll("_", " ")}] </span>}{f.text}{f.limitation && <span> (Limitation: {f.limitation})</span>}{f.reviewNote && <span> Reviewer: {f.reviewNote}</span>} <a href={`#source-${f.evidence[0]?.sourceId}`} className="text-xs text-teal-700 underline">[{f.evidence.map(v => v.sourceId.slice(0, 8)).join(", ")}]</a></p>)}{!current.findings.some(f => f.section === section && (current.approval ? f.review === "accepted" : f.review !== "rejected")) && <p>Not documented.</p>}</div></div>)}</div><button onClick={() => void copyNote()} className={`${button} mt-5 border border-slate-200`}><Clipboard size={16} /> Copy {current.approval ? "approved note" : "draft"}</button></section>
           <section className={`${card} p-5 sm:p-6`}><h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck size={19} className="text-teal-700" /> Physician approval</h2>{blockers.length ? <ul className="mt-4 list-inside list-disc space-y-2 text-xs text-amber-800">{blockers.map(v => <li key={v}>{v}</li>)}</ul> : <p className="mt-3 text-xs text-teal-700">All automated review checks passed. Verify clinical correctness yourself.</p>}<label className="mt-5 block text-xs font-semibold text-slate-600">Reviewing clinician<input value={clinician} onChange={e => setClinician(e.target.value)} placeholder="Demo clinician name" className="mt-2 w-full rounded-lg border border-slate-200 p-3 text-sm" /></label><button disabled={busy || blockers.length > 0 || Boolean(current.approval)} onClick={() => void act("approve", { physician: clinician })} className={`${button} mt-4 w-full bg-teal-800 text-white`}><Check size={16} /> {current.approval ? "Approved" : "Approve draft"}</button><button disabled={busy || !current.approval} onClick={() => void act("export")} className={`${button} mt-3 w-full border border-slate-200 bg-white text-slate-700`}><Upload size={16} /> {current.export ? "Simulated export complete" : "Simulate EHR export"}</button><p className="mt-3 text-[11px] leading-5 text-slate-500">No external EHR integration. A real EHR write would require authenticated clinician identity, patient match, FHIR mapping, and idempotency.</p></section></div></div>}
       </>}
+      {encounterToDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+          onClick={event => {
+            if (event.target === event.currentTarget && !busy) setEncounterToDelete(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-encounter-title"
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+          >
+            <div className="flex items-start gap-3">
+              <span className="rounded-full bg-red-50 p-2 text-red-700">
+                <Trash2 size={19} />
+              </span>
+              <div>
+                <h2 id="delete-encounter-title" className="text-lg font-semibold">
+                  Delete this encounter draft?
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  This permanently deletes the saved draft and its uploaded media. This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setEncounterToDelete(null)}
+                className={button + " border border-slate-200"}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void deleteEncounter()}
+                className={button + " bg-red-700 text-white hover:bg-red-800"}
+              >
+                {busy ? "Deleting…" : "Delete draft"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       <footer className="mt-10 border-t border-slate-200 pt-5 text-xs text-slate-400">AURA · Research prototype. Use fictional audio and non-patient imagery only. Saved demo files reside on this server until manually deleted.</footer>
     </main>
   </div>;

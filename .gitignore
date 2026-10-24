@@ -7,3 +7,10 @@ out/
 
 .env.local
 .aura-data/
+next-env.d.ts
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+.venv-test/

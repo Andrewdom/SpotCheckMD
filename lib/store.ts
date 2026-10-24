@@ -57,6 +57,10 @@ export function cookieHeader(id: string, request: Request) {
   return `aura_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=28800${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`;
 }
 export function changed(e: Encounter, action: string) {
+  if (e.analysis === "running" && action !== "analysis started") {
+    e.analysis = "none"; e.activeAnalysis = undefined;
+    e.analysisError = "Analysis was cancelled because the encounter changed. Run analysis again.";
+  }
   e.revision++; e.approval = null; e.export = null;
   e.audit.push({ at: new Date().toISOString(), action, revision: e.revision });
 }

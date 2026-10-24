@@ -1,6 +1,7 @@
-export type Specialty = "skin" | "throat";
+import type { ClinicalContext, ImageResult } from "./image-analysis/contracts";
+export type Specialty = ClinicalContext["specialty"];
 export type Section = "S" | "O" | "A" | "P";
-export type Evidence = { sourceId: string; quote: string };
+export type Evidence = { sourceId: string; quote: string; role?: "visual" | "context" | "spoken" | "clinician" };
 export type Quality = { status: "usable" | "limited" | "retake"; reasons: string[]; guidance: string[] };
 export type Source = {
   id: string; kind: "image" | "audio" | "transcript" | "clinician";
@@ -14,6 +15,7 @@ export type Finding = {
   limitation: string; evidence: Evidence[];
   review: "pending" | "accepted" | "rejected";
   reviewNote: string; originalText: string;
+  category?: string; analysisRunId?: string; provider?: string;
 };
 export type Conflict = { id: string; findingIds: string[]; description: string; resolution: string };
 export type Encounter = {
@@ -22,6 +24,10 @@ export type Encounter = {
   sources: Source[]; findings: Finding[]; conflicts: Conflict[];
   analysis: "none" | "running" | "ready" | "failed"; analysisError: string;
   model: string; promptVersion: string;
+  clinicalContext?: ClinicalContext;
+  imageAnalyses?: (ImageResult & { runId: string; provider: string })[];
+  analysisWarnings?: string[]; warningsAcknowledged?: boolean;
+  activeAnalysis?: { id: string; expiresAt: number };
   approval: null | { revision: number; physician: string; at: string; note: string; digest: string };
   export: null | { id: string; at: string; revision: number; mode: "simulation" };
   audit: { at: string; action: string; revision: number }[];
@@ -37,12 +43,13 @@ export function reviewBlockers(e: Encounter): string[] {
   if (!e.patientConfirmed) errors.push("Confirm the patient and encounter.");
   if (!e.consent) errors.push("Confirm capture and processing consent.");
   if (e.analysis === "running") errors.push("Wait for analysis to finish.");
+  if (e.analysisWarnings?.length && !e.warningsAcknowledged) errors.push("Acknowledge incomplete analysis and its limitations before approval.");
   if (!e.findings.some(f => f.review === "accepted")) errors.push("Accept at least one supported finding.");
   if (e.findings.some(f => f.review === "pending")) errors.push("Review every proposed finding.");
   if (e.conflicts.some(c => !c.resolution.trim())) errors.push("Resolve each conflict with a written explanation.");
   const ids = new Set(e.sources.map(s => s.id));
   for (const f of e.findings.filter(f => f.review === "accepted")) {
-    if (!f.evidence.length || f.evidence.some(v => !ids.has(v.sourceId))) errors.push("A finding has missing source evidence.");
+    if (!f.evidence.length || f.evidence.some(v => !ids.has(v.sourceId) || !v.quote.trim() || (e.sources.find(s => s.id === v.sourceId)?.kind === "transcript" && !e.sources.find(s => s.id === v.sourceId)?.text?.includes(v.quote)))) errors.push("A finding has missing source evidence.");
     if (f.certainty !== "observed" && !f.reviewNote.trim()) errors.push("Explain how uncertain or unassessable findings were handled.");
     if (f.text !== f.originalText && !f.reviewNote.trim()) errors.push("Explain edited findings.");
     if (f.evidence.some(v => e.sources.find(s => s.id === v.sourceId)?.quality?.status === "retake")) errors.push("Reject findings from images marked for retake; capture a better image.");
@@ -54,7 +61,7 @@ export function reviewBlockers(e: Encounter): string[] {
 export function composeNote(e: Encounter, approvedOnly = true): string {
   return (["S", "O", "A", "P"] as Section[]).map(section => {
     const findings = e.findings.filter(f => f.section === section && (approvedOnly ? f.review === "accepted" : f.review !== "rejected"));
-    const lines = findings.map(f => `${f.certainty === "observed" ? "" : `[${f.certainty.replaceAll("_", " ")}] `}${f.text}${f.limitation ? ` (Limitation: ${f.limitation})` : ""} [${f.evidence.map(v => v.sourceId).join(", ")}]${f.reviewNote ? `\nReviewer: ${f.reviewNote}` : ""}`);
+    const lines = findings.map(f => `${!approvedOnly && f.review === "pending" ? "[PENDING REVIEW] " : ""}${f.certainty === "observed" ? "" : `[${f.certainty.replaceAll("_", " ")}] `}${f.text}${f.limitation ? ` (Limitation: ${f.limitation})` : ""} [${f.evidence.map(v => v.sourceId).join(", ")}]${f.reviewNote ? `\nReviewer: ${f.reviewNote}` : ""}`);
     return `${sectionLabels[section].toUpperCase()}\n${lines.join("\n") || "Not documented."}`;
   }).join("\n\n");
 }

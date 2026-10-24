@@ -1,0 +1,5 @@
+fastapi>=0.115,<1
+pillow>=11,<13
+jsonschema>=4.23,<5
+httpx>=0.28,<1
+pytest>=8,<10

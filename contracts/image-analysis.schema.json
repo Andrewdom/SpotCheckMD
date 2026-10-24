@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "imageSourceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "imageType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "specialty": {
+      "type": "string",
+      "enum": [
+        "general",
+        "primary_care",
+        "urgent_care",
+        "dermatology",
+        "radiology",
+        "other",
+        "skin",
+        "throat"
+      ]
+    },
+    "anatomicalRegion": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "image",
+            "transcript",
+            "clinician",
+            "unknown"
+          ]
+        },
+        "visuallyConfirmed": {
+          "type": "boolean"
+        },
+        "transcriptQuote": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "source",
+        "visuallyConfirmed",
+        "transcriptQuote"
+      ],
+      "additionalProperties": false
+    },
+    "characteristics": {
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "certainty": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "uncertain",
+              "not_assessable"
+            ]
+          },
+          "evidence": {
+            "type": "object",
+            "properties": {
+              "imageSourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "visibleRegion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "transcriptSourceId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "transcriptQuote": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "imageSourceId",
+              "visibleRegion",
+              "transcriptSourceId",
+              "transcriptQuote"
+            ],
+            "additionalProperties": false
+          },
+          "limitations": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "description",
+          "certainty",
+          "evidence",
+          "limitations"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reportedHistory": {
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "attribution": {
+            "type": "string",
+            "enum": [
+              "patient_report",
+              "clinician_statement",
+              "unknown"
+            ]
+          },
+          "transcriptSourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "transcriptQuote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "verifiedByCurrentImage": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "required": [
+          "description",
+          "attribution",
+          "transcriptSourceId",
+          "transcriptQuote",
+          "verifiedByCurrentImage"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "conflicts": {
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "characteristicIds": {
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "transcriptSourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "transcriptQuote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "description",
+          "characteristicIds",
+          "transcriptSourceId",
+          "transcriptQuote"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "limitations": {
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "requiresPhysicianReview": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "imageSourceId",
+    "imageType",
+    "specialty",
+    "anatomicalRegion",
+    "characteristics",
+    "reportedHistory",
+    "conflicts",
+    "limitations",
+    "requiresPhysicianReview"
+  ],
+  "additionalProperties": false
+}

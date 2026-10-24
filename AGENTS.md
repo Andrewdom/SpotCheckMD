@@ -4,7 +4,7 @@
 
 SpotCheckMD is a hackathon research prototype for physician-reviewed, evidence-linked multimodal SOAP documentation across specialties. The existing UI, package name, cookie names, and storage use the earlier **Aura Visual Scribe** branding. Do not silently rename these identifiers or migrate stored data as part of unrelated work.
 
-Read `README.md`, `evals/README.md`, and the relevant implementation before changing behavior. `docs/architecture-review.md` records the initial assessment and proposed architecture; proposals are not implemented capabilities. The current milestone is repository understanding and shared context. Do not implement new features until the team agrees on the next priority; explain planned application changes first.
+Read `README.md`, `evals/README.md`, and the relevant implementation before changing behavior. `docs/architecture-review.md` records the initial assessment and proposed architecture; proposals are not implemented capabilities. The team has authorized the MedGemma 1.5 contextual image-analysis feature on `feature/medgemma-contextual-analysis`. See `docs/medgemma.md` for implementation/setup. Further feature priorities still require agreement; explain planned application changes first.
 
 ## Actual implementation
 
@@ -12,11 +12,12 @@ Read `README.md`, `evals/README.md`, and the relevant implementation before chan
 - `app/page.tsx`: one client dashboard for fictional patient selection, consent/identity confirmation, QR pairing, microphone/photo capture, evidence review, manual findings, SOAP preview, approval, and simulated export.
 - `app/api/demo/route.ts`: action-based API for anonymous sessions and the encounter lifecycle. Upload and analysis run here; do not mistake the UI's disabled buttons for server authorization.
 - `app/api/media/[id]/route.ts`: session-scoped media reads with no-store responses.
-- `lib/domain.ts`: encounter/source/finding/conflict types, two fictional patient profiles, review blockers, and deterministic SOAP composition. `Specialty` is currently only `skin | throat`; these are demo labels, not validated specialty modules.
+- `lib/domain.ts`: encounter/source/finding/conflict types, two fictional patient profiles, review blockers, and deterministic SOAP composition. Specialty context now includes general, primary care, urgent care, dermatology, radiology and other, while preserving legacy `skin | throat` labels. These are not validated specialty modules.
 - `lib/analysis.ts`: image normalization/quality heuristics, direct server-side OpenAI HTTP calls, structured suggestions, and basic evidence validation. Model strings currently configured are `gpt-transcribe` and `gpt-4o`; their presence in code does not establish account availability or successful live operation.
 - `lib/store.ts`: local JSON/media storage, a process-local transaction lock, anonymous session and encounter authorization, revision checks, approval invalidation, and error handling. `AURA_DATA_DIR` overrides the default `.aura-data/` path.
 - `scripts/smoke.cjs`: synthetic HTTP workflow checks; requires a running app. `scripts/evaluate.mjs`: aggregates supplied human-reviewed counts; it does not run models or establish clinical accuracy.
-- No real EHR adapter, clinician authentication, durable job queue, specialty registry, trained image classifier, CLEAR integration, or clinical evaluation results are present in the initial repository.
+- `lib/image-analysis/`: versioned schema, per-image providers, transcript windows, orchestration and comparison metrics. `services/medgemma/`: optional private Python inference service using the official pretrained model. `contracts/`: generated shared response schema/instructions; regenerate with `npm run generate:contracts`.
+- No real EHR adapter, clinician authentication, durable job queue, clinically validated specialty modules, CLEAR integration, or clinical evaluation results are present. Model weights have not been exercised by the mock test suite.
 
 ## Safety boundaries
 
@@ -34,7 +35,7 @@ Read `README.md`, `evals/README.md`, and the relevant implementation before chan
 ## Engineering conventions
 
 - Prefer small, focused changes using existing TypeScript types, `@/` imports, React components, and Tailwind conventions. No formatter or lint script is configured; do not reformat the entire repository in a behavior change.
-- Keep domain rules and note composition independent of provider calls and UI. Keep filesystem, credentials, and provider access server-side. Use runtime validation at trust boundaries; TypeScript assertions alone do not validate JSON. Zod is installed but is not used in the initial implementation.
+- Keep domain rules and note composition independent of provider calls and UI. Keep filesystem, credentials, and provider access server-side. Use runtime validation at trust boundaries; TypeScript assertions alone do not validate JSON. Zod validates contextual image output and transcript suggestions; keep the Python/TypeScript contracts synchronized.
 - Preserve cookie/encounter authorization, origin checks, revision checks, no-store media handling, and redacted errors when refactoring. Mutating encounter content should use the shared invalidation mechanism; the existing pairing/approval/export operations have distinct lifecycle semantics.
 - Keep exported note content aligned with the reviewed snapshot. Preserve original generated wording and reviewer changes; new provenance fields need explicit versioning and migration plans for saved encounters.
 - Model adapters, specialty profiles, storage, and export should have small interfaces within this app before introducing additional services. Do not add a framework, database, vector store, or model dependency without a concrete requirement.
@@ -52,6 +53,7 @@ Read `README.md`, `evals/README.md`, and the relevant implementation before chan
 Install dependencies with `npm ci`. Existing commands are:
 
 ```sh
+npm test
 npm run build
 npm run typecheck
 ```
@@ -76,3 +78,5 @@ Stop the test server afterward. Do not delete or reuse a teammate's `.aura-data/
 For application changes, run build/typecheck and applicable smoke/manual checks; add focused tests for changed safety and concurrency behavior. Mock provider output for deterministic regression tests. Include malformed output, invalid/cross-encounter sources, unsupported inputs, stale revisions, consent changes, and approval invalidation when relevant. For documentation-only work, check accuracy, links, and `git diff --check`; describe any baseline application checks separately.
 
 Run `node scripts/evaluate.mjs <reviewed-cases.json>` only with explicitly labeled synthetic or authorized cases and independent human reference counts. The example in `evals/README.md` is not a result. Report denominators, subgroup sizes, provenance, model/prompt versions, failures, and untested areas. Do not call a passing smoke test clinical validation. Live model tests require authorized demonstration inputs and configured API access; report when they were not run.
+
+The MedGemma service tests run with `python -m pytest services/medgemma/test_service.py -q` using the separate test requirements. They inject a fake generator and require no GPU or model token. Mock success is not evidence that real model generation or deployment works. Never enable a fake generator via a production environment flag; tests inject it in process.

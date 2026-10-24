@@ -1,0 +1,8 @@
+.git
+.env*
+.aura-data
+node_modules
+.next
+.venv
+**/__pycache__
+.pytest_cache

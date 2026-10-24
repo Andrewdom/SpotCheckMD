@@ -2,6 +2,8 @@
 
 A Next.js demo for a fictional patient-linked capture → review → approval workflow. **Use fictional dialogue and non-patient images only.** This is not an authenticated EHR, clinical software, or a HIPAA-compliant deployment.
 
+For teammates and their coding assistants, see the shareable [LLM handoff](docs/LLM_HANDOFF.md) for project context, implementation status, known failures, and continuation instructions. Read `AGENTS.md` before contributing.
+
 ## Run
 
 Use Node.js 20.9 or newer:

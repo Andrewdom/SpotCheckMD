@@ -420,7 +420,7 @@ export default function Dashboard({ physician }: { physician: { displayName: str
 
   return <div className="min-h-screen bg-[#f8f7f5] text-[#292524] selection:bg-[#eadde6]">
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[268px] flex-col border-r border-[#e6e1dd] bg-[#f2efed] xl:flex">
-      <div className="flex h-20 items-center gap-3 px-6"><span className="flex size-9 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={19} /></span><div><p className="text-[15px] font-bold tracking-[.12em]">AURA</p><p className="text-[10px] text-[#77706d]">Clinical workspace</p></div></div>
+      <div className="flex h-20 items-center gap-3 px-6"><span className="flex size-9 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={19} /></span><div><p className="text-[15px] font-bold tracking-[.08em]">Spot Check MD</p><p className="text-[10px] text-[#77706d]">Clinical workspace</p></div></div>
       <div className="px-4"><button type="button" disabled={busy || recording} onClick={returnToWorkspace} className={`${primaryButton} w-full justify-start px-3.5`}><Plus size={17} /> New encounter</button></div>
       <div className="mt-7 flex min-h-0 flex-1 flex-col"><p className="px-6 text-[10px] font-bold uppercase tracking-[.15em] text-[#98938a]">Recent encounters</p><nav className="soft-scrollbar mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto px-3" aria-label="Recent encounters">
         {encounters.length ? encounters.map(encounter => { const encounterPatient = PATIENTS.find(item => item.id === encounter.patientId); const selected = current?.id === encounter.id; const saved = encounter.ehrReceipts?.some(receipt => receipt.id === encounter.export?.id); return <button type="button" key={encounter.id} onClick={() => { setContextDirty(false); setReplayEncounterId(null); update(encounter); setFocusNoteId(undefined); setStage(encounter.findings.length ? "review" : "capture"); }} className={`w-full rounded-xl px-3 py-3 text-left transition ${selected ? "bg-white shadow-sm" : "hover:bg-white/60"}`}><span className="block truncate text-sm font-semibold">{encounterPatient?.name}</span><span className="mt-1 flex items-center justify-between text-[11px] text-[#858078]"><span>{new Date(encounter.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}</span><span className={saved ? "text-[#39704a]" : encounter.findings.length ? "text-[#6b4a61]" : ""}>{saved ? "Saved" : encounter.findings.length ? "Review" : "Capture"}</span></span></button>; }) : <p className="px-3 py-4 text-xs leading-5 text-[#8d887f]">Your consultations will appear here.</p>}
@@ -1009,7 +1009,7 @@ export default function Dashboard({ physician }: { physician: { displayName: str
           </section>
         </div>
       )}
-      <footer className="mt-10 border-t border-[#e6e1dd] pt-5 text-xs leading-5 text-[#918986]">AURA · Research prototype using synthetic patient encounters and authorized demonstration media only. Physician review is required; no clinical validation or HIPAA compliance is claimed.</footer>
+      <footer className="mt-10 border-t border-[#e6e1dd] pt-5 text-xs leading-5 text-[#918986]">Spot Check MD · Research prototype using synthetic patient encounters and authorized demonstration media only. Physician review is required; no clinical validation or HIPAA compliance is claimed.</footer>
       </main>
     </div>
   </div>;

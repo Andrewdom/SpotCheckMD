@@ -29,6 +29,8 @@ Open `http://localhost:3000` on the development computer. Configure `MEDGEMMA_UR
 
 For AssemblyAI Medical Mode, set `TRANSCRIPTION_PROVIDER=assemblyai` and a server-only `ASSEMBLYAI_API_KEY`. The default transcript-documentation behavior without an OpenAI key is local extractive/manual: review the transcript and add clinician-authored SOAP findings yourself. It does not automatically summarize or classify speech into SOAP sections. Audio recording requires browser microphone permission and localhost or HTTPS.
 
+The shared Unraid deployment uses a production Docker image, persistent demo storage, private loopback MedGemma connectivity, durable queued analysis, and the existing Cloudflare Tunnel. See [Unraid web deployment and operations](docs/unraid-web-deployment.md).
+
 ## Image handling and analysis
 
 The app accepts JPEG and PNG. Defaults are 50 MB and 60 megapixels for app uploads, with a separately configurable inference-service size limit. It applies EXIF orientation, removes image metadata, stores a lossless oriented PNG for inference, and creates a separate compressed preview. The inference image retains its oriented pixel dimensions in transport; the MedGemma service resizes it to 896 × 896 and uses 256 vision tokens internally. This is not native-resolution model perception. HEIC/HEIF is not accepted.

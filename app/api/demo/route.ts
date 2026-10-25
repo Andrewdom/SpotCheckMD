@@ -1,15 +1,12 @@
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
-import { assessImage, imageUploadLimitBytes, suggest } from "@/lib/analysis";
+import { assessImage, imageUploadLimitBytes } from "@/lib/analysis";
+import { kickAnalysisWorker } from "@/lib/analysis-jobs";
 import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Source } from "@/lib/domain";
 import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, createSession, dataRoot, digest, mediaPath, respondError, transaction, uid } from "@/lib/store";
 
-import { contextSchema, PROMPT_VERSION } from "@/lib/image-analysis/contracts";
-import { configuredImageProvider } from "@/lib/image-analysis/providers";
-import { analyzeEncounter } from "@/lib/image-analysis/pipeline";
+import { contextSchema } from "@/lib/image-analysis/contracts";
 import { demoEhr, selectedChartContext } from "@/lib/ehr/adapter";
-import { configuredTranscriptionProvider, transcriptionModel } from "@/lib/transcription/providers";
-import { soapDocumentationMode } from "@/lib/transcription/soap";
 
 export const runtime = "nodejs";
 const safe = (e: Encounter) => ({ ...e, owner: undefined, sources: e.sources.map(({ mediaId, ...source }) => ({ ...source, mediaId: mediaId || undefined })) });
@@ -17,6 +14,7 @@ const required = (v: unknown, max = 300) => typeof v === "string" && v.length <=
 
 export async function GET(request: Request) {
   try {
+    void kickAnalysisWorker();
     const data = await transaction(db => {
       const session = auth(db, request);
       return db.encounters.filter(e => e.owner === session.owner).map(safe);
@@ -213,68 +211,22 @@ async function analyze(request: Request) {
   const body = await request.json();
   const id = required(body.encounterId, 32);
   const runId = uid();
-  const snapshot = await transaction(db => {
+  const encounter = await transaction(db => {
     auth(db, request, id);
     const e = db.encounters.find(v => v.id === id)!;
     checkRevision(e, body.revision);
     if (!e.consent || !e.patientConfirmed || !e.sources.some(s => ["image", "audio", "transcript"].includes(s.kind))) throw new AppError(400, "Confirm patient and consent, then capture media.");
-    if (e.analysis === "running" && e.activeAnalysis && e.activeAnalysis.expiresAt > Date.now()) throw new AppError(409, "Analysis is already running.");
-    e.analysis = "running"; e.analysisError = "";
-    e.activeAnalysis = { id: runId, expiresAt: Date.now() + 30 * 60 * 1000 };
-    changed(e, "analysis started");
-    return structuredClone(e);
-  });
-  const ensureCurrent = () => transaction(db => {
-    auth(db, request, id);
-    const e = db.encounters.find(v => v.id === id)!;
-    checkRevision(e, snapshot.revision);
-    if (!e.consent || !e.patientConfirmed || e.activeAnalysis?.id !== runId || e.activeAnalysis.expiresAt <= Date.now()) throw new AppError(409, "Analysis was cancelled or expired. Review the current encounter and retry.");
-  });
-  try {
-    const result = await analyzeEncounter(snapshot, runId, {
-      provider: configuredImageProvider, transcriber: configuredTranscriptionProvider,
-      document: soapDocumentationMode() === "extractive" ? async () => [] : (transcript, specialty) => suggest([], transcript, specialty),
-      readMedia: source => readFile(mediaPath(source.mediaId!)), ensureCurrent,
-    });
-    await ensureCurrent();
-    const encounter = await transaction(db => {
-      auth(db, request, id);
-      const e = db.encounters.find(v => v.id === id)!;
-      checkRevision(e, snapshot.revision);
-      if (e.activeAnalysis?.id !== runId || !e.consent || !e.patientConfirmed) throw new AppError(409, "Analysis superseded.");
-      e.sources.push(...result.newSources);
-      e.transcripts = [...(e.transcripts || []), ...result.newTranscripts];
-      // Preserve clinician edits and prior decisions when retrying; replace only pending AI proposals.
-      const retained = e.findings.filter(f => f.origin === "clinician" || f.review !== "pending");
-      const retainedIds = new Set(retained.map(f => f.id));
-      e.findings = [...retained, ...result.findings];
-      e.conflicts = [...e.conflicts.filter(c => c.findingIds.every(id => retainedIds.has(id))), ...result.conflicts];
-      e.imageAnalyses = [...(e.imageAnalyses || []), ...result.analyses];
-      e.analysisWarnings = result.warnings; e.warningsAcknowledged = false;
-      e.analysis = result.findings.length || result.analyses.length ? "ready" : "failed";
-      const hasTranscript = e.sources.some(source => source.kind === "transcript");
-      const transcriptionFailed = result.warnings.some(warning => warning.startsWith("Audio transcription failed"));
-      const medgemmaFailure = result.warnings.find(warning => warning.includes("MedGemma"));
-      e.analysisError = e.analysis !== "failed" ? ""
-        : medgemmaFailure || (hasTranscript && soapDocumentationMode() === "extractive" ? "The finalized doctor-dictation transcript is available. In free local mode, add clinician-authored findings manually and choose their SOAP sections."
-          : hasTranscript ? "The finalized transcript is available, but SOAP suggestions were not generated. Check the OpenAI SOAP-extraction configuration or add a clinician observation."
-          : transcriptionFailed ? "The audio was saved, but transcription failed. Check the provider settings and confirm the recording contains only doctor dictation before retrying."
-            : "No new findings were generated. Review analysis warnings or add a supported manual observation.");
+    if (e.analysis === "running" && e.activeAnalysis?.expiresAt && e.activeAnalysis.expiresAt > Date.now()) throw new AppError(409, "Analysis is already queued or processing.");
+    if (e.analysis === "running") {
+      e.analysis = "failed";
       e.activeAnalysis = undefined;
-      e.model = [...new Set([...result.analyses.map(a => a.model), ...(e.transcripts || []).map(transcriptionModel), ...(result.findings.some(f => f.origin === "spoken") ? ["gpt-4o (transcript documentation)"] : [])].filter(Boolean))].join(" + ");
-      e.promptVersion = PROMPT_VERSION;
-      changed(e, "analysis completed"); return safe(e);
-    });
-    return Response.json({ encounter });
-  } catch (error) {
-    await transaction(db => {
-      const e = db.encounters.find(v => v.id === id);
-      if (e?.activeAnalysis?.id === runId) {
-        e.analysis = "failed"; e.activeAnalysis = undefined;
-        e.analysisError = "Analysis failed or expired. Retry with authorized demonstration inputs.";
-        changed(e, "analysis failed");
-      }
-    });
-    return respondError(error);
-  }
+      e.analysisError = "The previous analysis expired before completion.";
+    }
+    e.analysis = "running"; e.analysisError = "";
+    e.activeAnalysis = { id: runId, status: "queued", queuedAt: new Date().toISOString(), attempts: 0, expiresAt: Date.now() + 2 * 60 * 60 * 1000 };
+    changed(e, "analysis started");
+    return safe(e);
+  });
+  void kickAnalysisWorker();
+  return Response.json({ encounter }, { status: 202 });
 }

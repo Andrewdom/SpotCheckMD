@@ -47,16 +47,31 @@ globalThis.fetch = async (url, init) => {
   }
   throw new Error("Unexpected network access blocked by test");
 };
-after(async () => { globalThis.fetch = realFetch; await rm(directory, { recursive: true, force: true }); });
+after(async () => {
+  const { waitForAnalysisWorker } = await import("../lib/analysis-jobs");
+  await waitForAnalysisWorker();
+  globalThis.fetch = realFetch;
+  await rm(directory, { recursive: true, force: true });
+});
 
 async function session() {
   const origin = "http://localhost:3107";
   let cookie = "";
-  async function action(name: string, data: Record<string, unknown> | FormData) {
+  async function action(name: string, data: Record<string, unknown> | FormData, waitForAnalysis = true) {
     const response = await api.POST(new Request(`${origin}/api/demo?action=${name}`, { method: "POST", headers: { Origin: origin, Cookie: cookie, ...(data instanceof FormData ? {} : { "Content-Type": "application/json" }) }, body: data instanceof FormData ? data : JSON.stringify(data) }));
     if (response.headers.has("set-cookie")) cookie = response.headers.get("set-cookie")!.split(";")[0];
-    return { status: response.status, body: await response.json() };
+    const result = { status: response.status, body: await response.json() };
+    if (name === "analyze" && result.status === 202 && waitForAnalysis) {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const current = await reload(result.body.encounter.id);
+        if (current.analysis !== "running") return { status: 200, body: { encounter: current } };
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      throw new Error("Timed out waiting for queued analysis in test");
+    }
+    return result;
   }
+  async function reload(encounterId = e.id) { const response = await api.GET(new Request(`${origin}/api/demo`, { headers: { Cookie: cookie } })); return (await response.json()).encounters.find((v: Encounter) => v.id === encounterId) as Encounter; }
   await action("bootstrap", {});
   let e = (await action("create", { patientId: "demo-001" })).body.encounter as Encounter;
   e = (await action("confirm", { encounterId: e.id, revision: e.revision, confirmed: true, consent: true })).body.encounter;
@@ -65,7 +80,7 @@ async function session() {
     const form = new FormData(); form.set("encounterId", e.id); form.set("revision", String(e.revision)); form.set("kind", kind); form.set("file", new Blob([new Uint8Array(bytes)], { type: kind === "image" ? "image/jpeg" : "audio/webm" }), kind === "image" ? "synthetic.jpg" : "synthetic.webm");
     const result = await action("upload", form); assert.equal(result.status, 200); e = result.body.encounter;
   }
-  return { action, upload, get e() { return e; }, set e(value) { e = value; }, async reload() { const response = await api.GET(new Request(`${origin}/api/demo`, { headers: { Cookie: cookie } })); return (await response.json()).encounters.find((v: Encounter) => v.id === e.id) as Encounter; } };
+  return { action, upload, get e() { return e; }, set e(value) { e = value; }, reload };
 }
 
 test("API: contextual MedGemma findings, source validation, review, export and revocation", async () => {
@@ -99,10 +114,11 @@ test("API: image analysis remains usable after transcription failure, with ackno
 test("API: consent revocation cancels an in-flight run without stranding analysis or overwriting edits", async () => {
   const s = await session(); await s.upload("image");
   const hasEntered = new Promise<void>(resolve => { entered = resolve; });
-  const running = s.action("analyze", { encounterId: s.e.id, revision: s.e.revision }); await hasEntered;
+  const queued = await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision }, false); assert.equal(queued.status, 202); await hasEntered;
   s.e = await s.reload(); assert.equal(s.e.analysis, "running");
   s.e = (await s.action("confirm", { encounterId: s.e.id, revision: s.e.revision, confirmed: true, consent: false })).body.encounter;
-  release!(); assert.equal((await running).status, 409);
+  release!();
+  for (let attempt = 0; attempt < 50 && (await s.reload()).analysis === "running"; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
   s.e = await s.reload(); assert.equal(s.e.consent, false); assert.equal(s.e.analysis, "none"); assert.equal(s.e.findings.length, 0);
   assert.equal((await s.action("analyze", { encounterId: s.e.id, revision: s.e.revision })).status, 400);
   s.e = (await s.action("confirm", { encounterId: s.e.id, revision: s.e.revision, confirmed: true, consent: true })).body.encounter;

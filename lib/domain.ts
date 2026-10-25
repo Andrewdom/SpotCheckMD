@@ -34,7 +34,14 @@ export type Encounter = {
   clinicalContext?: ClinicalContext;
   imageAnalyses?: (ImageResult & { runId: string; provider: string })[];
   analysisWarnings?: string[]; warningsAcknowledged?: boolean;
-  activeAnalysis?: { id: string; expiresAt: number };
+  activeAnalysis?: {
+    id: string;
+    status: "queued" | "processing";
+    queuedAt: string;
+    startedAt?: string;
+    attempts: number;
+    expiresAt: number;
+  };
   chartContext?: ChartContext;
   ehrReceipts?: EhrReceipt[];
   transcripts?: TranscriptArtifact[];

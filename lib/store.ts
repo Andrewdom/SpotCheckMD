@@ -6,7 +6,7 @@ import type { StoredChart } from "./ehr/types";
 
 export const dataRoot = process.env.AURA_DATA_DIR || path.join(process.cwd(), ".aura-data");
 type Session = { id: string; owner: string; expires: number };
-type Database = { encounters: Encounter[]; sessions: Session[]; ehrCharts?: StoredChart[]; pairings?: unknown[] };
+export type Database = { encounters: Encounter[]; sessions: Session[]; ehrCharts?: StoredChart[]; pairings?: unknown[] };
 const globalStore = globalThis as unknown as { auraLock?: Promise<unknown> };
 export const uid = () => randomBytes(16).toString("hex");
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");

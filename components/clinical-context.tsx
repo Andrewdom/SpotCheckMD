@@ -1,12 +1,29 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, SlidersHorizontal } from "lucide-react";
 import { specialties, type ClinicalContext } from "@/lib/image-analysis/contracts";
 import type { Encounter } from "@/lib/domain";
 
+type ContextEncounter = Pick<Encounter, "id" | "specialty" | "clinicalContext">;
+
+export function clinicalContextDraft(encounter: Pick<Encounter, "specialty" | "clinicalContext">): ClinicalContext {
+  return encounter.clinicalContext || { specialty: encounter.specialty, imageType: "clinical_photo", anatomicalLocation: "", physicianContext: "" };
+}
+
+// Identity of the saved context, not the encounter object. Refreshing consent or pairing
+// replaces that object without changing what was saved.
+export function clinicalContextSyncKey(encounter: ContextEncounter): string {
+  const draft = clinicalContextDraft(encounter);
+  return JSON.stringify([encounter.id, draft.specialty, draft.imageType, draft.anatomicalLocation, draft.physicianContext]);
+}
+
 export function ClinicalContextEditor({ encounter, disabled, onSave }: { encounter: Encounter; disabled: boolean; onSave: (context: ClinicalContext) => void }) {
-  const [value, setValue] = useState<ClinicalContext>(encounter.clinicalContext || { specialty: encounter.specialty, imageType: "clinical_photo", anatomicalLocation: "", physicianContext: "" });
-  useEffect(() => { setValue(encounter.clinicalContext || { specialty: encounter.specialty, imageType: "clinical_photo", anatomicalLocation: "", physicianContext: "" }); }, [encounter.id, encounter.specialty, encounter.clinicalContext]);
+  const draft = clinicalContextDraft(encounter);
+  const [value, setValue] = useState<ClinicalContext>(draft);
+  const syncKey = clinicalContextSyncKey(encounter);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  useEffect(() => { setValue(draftRef.current); }, [syncKey]);
   return <details className="group rounded-[18px] border border-[#e7e2de] bg-white p-5 shadow-[0_1px_2px_rgba(44,32,39,.03)]">
     <summary className="flex cursor-pointer list-none items-center justify-between gap-3"><span className="flex items-center gap-3"><span className="flex size-9 items-center justify-center rounded-xl bg-[#f0e7ed] text-[#66485d]"><SlidersHorizontal size={16} /></span><span><span className="block text-sm font-semibold">Clinical context</span><span className="mt-1 block text-[11px] capitalize text-[#817976]">{value.specialty.replaceAll("_", " ")} · {value.imageType.replaceAll("_", " ")}</span></span></span><ChevronDown size={15} className="text-[#918986] transition group-open:rotate-180" /></summary>
     <div className="mt-5 border-t border-[#ece7e3] pt-4">

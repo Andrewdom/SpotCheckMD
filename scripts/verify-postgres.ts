@@ -33,6 +33,11 @@ const first = await signIn("physician-a", "synthetic-password-123", request({}))
 const second = await signIn("physician-a", "synthetic-password-123", request({}));
 const foreign = await signIn("physician-b", "synthetic-password-123", request({}));
 assert.notEqual(first.token, second.token);
+const spoofed = (index: number) => new Request(`${origin}/api/auth/login`, { method: "POST", headers: { Origin: origin, "X-Forwarded-For": `203.0.113.${index}` } });
+for (let index = 0; index < 20; index++) {
+  await assert.rejects(signIn("synthetic-target", "wrong-password", spoofed(index)), (error: unknown) => error instanceof store.AppError && error.status === 401);
+}
+await assert.rejects(signIn("synthetic-target", "wrong-password", spoofed(99)), (error: unknown) => error instanceof store.AppError && error.status === 429);
 const cookie = (token: string) => `spotcheck_session=${token}`;
 async function action(token: string, name: string, body: Record<string, unknown> | FormData) {
   return api.POST(new Request(`${origin}/api/demo?action=${name}`, { method: "POST", headers: { Origin: origin, Cookie: cookie(token), ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }) }, body: body instanceof FormData ? body : JSON.stringify(body) }));
@@ -78,7 +83,7 @@ await revokeSession(first.token);
 assert.equal(await identityForToken(first.token), null);
 await reopened`UPDATE physician_sessions SET expires_at = now() - interval '1 minute' WHERE token_hash = ${store.digest(second.token)}`;
 assert.equal(await identityForToken(second.token), null);
-console.log("PASS: PostgreSQL auth, isolation, two-device sharing, optimistic concurrency, media ownership, EHR persistence and queued jobs");
+console.log("PASS: PostgreSQL auth, account throttling across forwarded IPs, isolation, two-device sharing, optimistic concurrency, media ownership, EHR persistence and queued jobs");
 await closeDatabase();
 await rm(mediaRoot, { recursive: true, force: true });
 }

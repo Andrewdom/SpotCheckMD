@@ -7,6 +7,10 @@ import { AppError } from "./store";
 
 export const SESSION_COOKIE = "spotcheck_session";
 const SESSION_SECONDS = 12 * 60 * 60;
+const CLIENT_FAILURE_LIMIT = 5;
+// Forwarded IP headers are client-controlled unless a proxy overwrites them, so
+// a per-account ceiling keeps rotating headers from granting unlimited guesses.
+const ACCOUNT_FAILURE_LIMIT = 20;
 const ARGON_OPTIONS: Options = { algorithm: 2, memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 };
 const DUMMY_HASH = "$argon2id$v=19$m=19456,t=2,p=1$MTIzNDU2Nzg5MDEyMzQ1Ng$YBMQicXF4IIaOJQAhJgaif2yPXrgOknDC8vB/wIsazM";
 
@@ -34,13 +38,16 @@ export async function signIn(usernameInput: string, password: string, request: R
   const username = normalizeUsername(usernameInput);
   const client = requestClient(request);
   const throttleKey = fingerprint(`${username}|${client.ipHash}`);
+  const accountKey = fingerprint(`account|${username}`);
   const outcome = await sql().begin(async db => {
-    await db`SELECT pg_advisory_xact_lock(hashtextextended(${throttleKey}, 0))`;
-    const recent = await db<{ failures: number }[]>`
-      SELECT count(*)::int AS failures FROM login_attempts
-      WHERE throttle_key = ${throttleKey} AND success = false AND attempted_at > now() - interval '15 minutes'
+    await db`SELECT pg_advisory_xact_lock(hashtextextended(${accountKey}, 0))`;
+    const recent = await db<{ client: number; account: number }[]>`
+      SELECT count(*) FILTER (WHERE throttle_key = ${throttleKey})::int AS client,
+             count(*) FILTER (WHERE throttle_key = ${accountKey})::int AS account
+      FROM login_attempts
+      WHERE throttle_key IN (${throttleKey}, ${accountKey}) AND success = false AND attempted_at > now() - interval '15 minutes'
     `;
-    if ((recent[0]?.failures || 0) >= 5) return { throttled: true as const };
+    if ((recent[0]?.client || 0) >= CLIENT_FAILURE_LIMIT || (recent[0]?.account || 0) >= ACCOUNT_FAILURE_LIMIT) return { throttled: true as const };
     const rows = await db<{ id: string; username: string; display_name: string; password_hash: string; organization_id: string; role: "physician" | "admin" }[]>`
       SELECT p.id, p.username, p.display_name, p.password_hash, m.organization_id, m.role
       FROM physicians p JOIN organization_memberships m ON m.physician_id = p.id
@@ -49,7 +56,8 @@ export async function signIn(usernameInput: string, password: string, request: R
     `;
     const physician = rows[0];
     const valid = await verifyPassword(physician?.password_hash || DUMMY_HASH, password);
-    await db`INSERT INTO login_attempts (throttle_key, success) VALUES (${throttleKey}, ${Boolean(physician && valid)})`;
+    const success = Boolean(physician && valid);
+    await db`INSERT INTO login_attempts (throttle_key, success) VALUES (${throttleKey}, ${success}), (${accountKey}, ${success})`;
     if (!physician || !valid) return { invalid: true as const };
     const token = randomBytes(32).toString("base64url");
     await db`

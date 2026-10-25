@@ -224,6 +224,7 @@ def prepare(output: Path, count: int) -> None:
 
     manifest = []
     provenance = []
+    skipped = []
     hashes: set[str] = set()
     for row, image_object, image_index, bucket in candidate_order(cases, labels):
         if len(manifest) >= count:
@@ -234,13 +235,16 @@ def prepare(output: Path, count: int) -> None:
             data = temporary.read_bytes()
         except (OSError, ValueError, httpx.HTTPError):
             temporary.unlink(missing_ok=True)
+            skipped.append({"caseId": row["case_id"], "imageObject": image_object, "reason": "download_failed"})
             continue
         decoded = decode_supported_image(data)
         if decoded is None:
             temporary.unlink(missing_ok=True)
+            skipped.append({"caseId": row["case_id"], "imageObject": image_object, "reason": "unsupported_or_over_pixel_budget"})
             continue
         if image_meta["sha256"] in hashes:
             temporary.unlink(missing_ok=True)
+            skipped.append({"caseId": row["case_id"], "imageObject": image_object, "reason": "duplicate_image"})
             continue
         hashes.add(image_meta["sha256"])
         case_id = row["case_id"]
@@ -284,10 +288,10 @@ def prepare(output: Path, count: int) -> None:
     (output / "scin-provenance.json").write_text(json.dumps({"version": 1, **common,
         "metadata": {"cases": {"object": CASES_OBJECT, "generation": CASES_GENERATION, **cases_meta},
                      "labels": {"object": LABELS_OBJECT, "generation": LABELS_GENERATION, **labels_meta}},
-        "cases": provenance}, indent=2) + "\n")
+        "cases": provenance, "skippedCandidates": skipped}, indent=2) + "\n")
     for path in (output / "comparison-manifest.json", output / "scin-provenance.json"):
         path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    print(f"Prepared {count} private SCIN case(s) in {output}")
+    print(f"Prepared {count} private SCIN case(s) in {output}; skipped {len(skipped)} candidate(s), recorded in scin-provenance.json")
 
 
 def main() -> None:

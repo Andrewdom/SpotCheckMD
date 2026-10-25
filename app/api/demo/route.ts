@@ -1,6 +1,5 @@
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
 import { assessImage, imageUploadLimitBytes, suggest } from "@/lib/analysis";
 import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Source } from "@/lib/domain";
 import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, createSession, dataRoot, digest, mediaPath, respondError, transaction, uid } from "@/lib/store";
@@ -18,25 +17,9 @@ const required = (v: unknown, max = 300) => typeof v === "string" && v.length <=
 
 export async function GET(request: Request) {
   try {
-    const url = new URL(request.url);
-    const pair = url.searchParams.get("pair");
-    if (pair) {
-      const result = await transaction(db => {
-        const p = db.pairings.find(v => v.hash === digest(pair) && !v.used && v.expires > Date.now());
-        if (!p) throw new AppError(410, "The QR link expired or was already used. Generate a new one.");
-        const e = db.encounters.find(v => v.id === p.encounterId);
-        if (!e) throw new AppError(404, "Encounter not found.");
-        p.used = true;
-        return { encounter: safe(e), session: createSession(db, e.owner, e.id) };
-      });
-      const res = Response.json({ encounter: result.encounter });
-      res.headers.set("Set-Cookie", cookieHeader(result.session, request));
-      res.headers.set("Cache-Control", "no-store");
-      return res;
-    }
     const data = await transaction(db => {
       const session = auth(db, request);
-      return db.encounters.filter(e => session.encounterId ? e.id === session.encounterId : e.owner === session.owner).map(safe);
+      return db.encounters.filter(e => e.owner === session.owner).map(safe);
     });
     return Response.json({ encounters: data }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return respondError(error); }
@@ -59,8 +42,7 @@ export async function POST(request: Request) {
     const encounterId = required(body.encounterId, 32);
     if (action === "delete-encounter") {
       const mediaIds = await transaction(db => {
-        const session = auth(db, request, encounterId);
-        if (session.encounterId) throw new AppError(403, "Paired capture sessions cannot delete encounters.");
+        auth(db, request, encounterId);
 
         const encounterIndex = db.encounters.findIndex(item => item.id === encounterId);
         if (encounterIndex < 0) throw new AppError(404, "Encounter not found.");
@@ -68,9 +50,6 @@ export async function POST(request: Request) {
         checkRevision(encounter, body.revision);
 
         db.encounters.splice(encounterIndex, 1);
-        db.pairings = db.pairings.filter(pairing => pairing.encounterId !== encounterId);
-        db.sessions = db.sessions.filter(session => session.encounterId !== encounterId);
-
         const removedMediaIds = [...new Set(
           encounter.sources.flatMap(source => [source.mediaId, source.previewMediaId]).filter((id): id is string => Boolean(id)),
         )];
@@ -89,7 +68,6 @@ export async function POST(request: Request) {
       if (!patient) throw new AppError(400, "Choose a fictional demo patient.");
       const encounter = await transaction(db => {
         const session = auth(db, request);
-        if (session.encounterId) throw new AppError(403, "QR sessions cannot create encounters.");
         const now = new Date().toISOString();
         const e: Encounter = { id: uid(), owner: session.owner, patientId: patient.id, specialty: patient.specialty, createdAt: now, revision: 0, consent: false, patientConfirmed: false, sources: [], findings: [], conflicts: [], analysis: "none", analysisError: "", model: "", promptVersion: "visual-v1", approval: null, export: null, audit: [{ at: now, action: "created", revision: 0 }] };
         db.encounters.push(e); return safe(e);
@@ -150,10 +128,6 @@ export async function POST(request: Request) {
       } else if (action === "confirm") {
         if (typeof body.confirmed !== "boolean" || typeof body.consent !== "boolean") throw new AppError(400, "Confirm identity and consent.");
         e.patientConfirmed = body.confirmed; e.consent = body.consent; changed(e, "confirmation updated");
-      } else if (action === "pair") {
-        const token = randomBytes(24).toString("base64url");
-        db.pairings.push({ hash: digest(token), encounterId: e.id, expires: Date.now() + 5 * 60 * 1000, used: false });
-        return { encounter: safe(e), token };
       } else if (action === "review") {
         const f = e.findings.find(v => v.id === body.findingId);
         if (!f || !["accepted", "rejected", "pending"].includes(body.review)) throw new AppError(400, "Invalid review decision.");
@@ -279,7 +253,7 @@ async function analyze(request: Request) {
       e.analysisWarnings = result.warnings; e.warningsAcknowledged = false;
       e.analysis = result.findings.length || result.analyses.length ? "ready" : "failed";
       const hasTranscript = e.sources.some(source => source.kind === "transcript");
-      const transcriptionFailed = result.warnings.some(warning => warning.startsWith("Audio transcription failed."));
+      const transcriptionFailed = result.warnings.some(warning => warning.startsWith("Audio transcription failed"));
       const medgemmaFailure = result.warnings.find(warning => warning.includes("MedGemma"));
       e.analysisError = e.analysis !== "failed" ? ""
         : medgemmaFailure || (hasTranscript && soapDocumentationMode() === "extractive" ? "The finalized doctor-dictation transcript is available. In free local mode, add clinician-authored findings manually and choose their SOAP sections."

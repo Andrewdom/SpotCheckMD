@@ -94,17 +94,37 @@ test("EHR: approved snapshot persists, reload reads it, and concurrent retry doe
   assert.equal((await s.chart()).chart.notes[0].id, s.e.export?.id);
 });
 
-test("EHR: workspace isolation and paired-session patient boundaries", async () => {
+test("EHR: browser workspaces are isolated and an owner can use encounters directly", async () => {
   const first = await session(); await first.prepare(); await first.change("approve-send", { physician: "Dr Demo" });
   const other = await session();
   assert.equal((await other.chart()).chart.notes.length, 0);
   assert.equal((await other.action("export", { encounterId: first.e.id, revision: first.e.revision })).status, 404);
-  const pairing = await first.change("pair");
-  const response = await api.GET(new Request(`${origin}/api/demo?pair=${pairing.body.token}`));
-  const pairedCookie = response.headers.get("set-cookie")!.split(";")[0];
-  assert.equal((await first.chart("demo-001", pairedCookie)).status, 200);
-  assert.equal((await first.chart("demo-002", pairedCookie)).status, 404);
+  const secondEncounter = await first.action("create", { patientId: "demo-002" });
+  assert.equal(secondEncounter.status, 200);
+  const ownerWorkspace = await api.GET(new Request(origin + "/api/demo", { headers: { Cookie: first.cookie } }));
+  assert.equal(ownerWorkspace.status, 200);
+  assert.equal((await ownerWorkspace.json()).encounters.length, 2);
+  assert.equal((await first.chart("demo-002")).status, 200);
   assert.equal((await first.chart("demo-002")).chart.notes.length, 0);
+  assert.equal((await other.action("export", { encounterId: secondEncounter.body.encounter.id, revision: 0 })).status, 404);
+  assert.equal((await api.GET(new Request(origin + "/api/demo?pair=not-a-token"))).status, 401);
+});
+
+test("EHR: legacy paired sessions expire and pairing records are removed", async () => {
+  await session();
+  const legacyId = "a".repeat(32);
+  await store.transaction(db => {
+    const legacy = db as unknown as { sessions: Array<{ id: string; owner: string; encounterId: string; expires: number }>; pairings: unknown[] };
+    legacy.sessions.push({ id: legacyId, owner: "legacy-owner", encounterId: "legacy-encounter", expires: Date.now() + 60_000 });
+    legacy.pairings = [{ hash: "old-token-hash", encounterId: "legacy-encounter", expires: Date.now() + 60_000, used: false }];
+  });
+  const migrated = await store.transaction(db => {
+    const legacy = db as unknown as { sessions: Array<{ id: string }>; pairings?: unknown[] };
+    return { sessionRemains: legacy.sessions.some(item => item.id === legacyId), pairingRecordsRemain: "pairings" in legacy };
+  });
+  assert.deepEqual(migrated, { sessionRemains: false, pairingRecordsRemain: false });
+  const response = await api.GET(new Request(origin + "/api/demo", { headers: { Cookie: "aura_session=" + legacyId } }));
+  assert.equal(response.status, 401);
 });
 
 test("EHR: history selection validates consent, patient ownership, chart version and exact server content", async () => {

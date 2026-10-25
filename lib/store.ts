@@ -5,9 +5,8 @@ import type { Encounter } from "./domain";
 import type { StoredChart } from "./ehr/types";
 
 export const dataRoot = process.env.AURA_DATA_DIR || path.join(process.cwd(), ".aura-data");
-type Session = { id: string; owner: string; encounterId: string | null; expires: number };
-type Pairing = { hash: string; encounterId: string; expires: number; used: boolean };
-type Database = { encounters: Encounter[]; sessions: Session[]; pairings: Pairing[]; ehrCharts?: StoredChart[] };
+type Session = { id: string; owner: string; expires: number };
+type Database = { encounters: Encounter[]; sessions: Session[]; ehrCharts?: StoredChart[]; pairings?: unknown[] };
 const globalStore = globalThis as unknown as { auraLock?: Promise<unknown> };
 export const uid = () => randomBytes(16).toString("hex");
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -18,9 +17,11 @@ export async function transaction<T>(fn: (db: Database) => T | Promise<T>): Prom
     await mkdir(dataRoot, { recursive: true, mode: 0o700 });
     let db: Database;
     try { db = JSON.parse(await readFile(path.join(dataRoot, "db.json"), "utf8")); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; db = { encounters: [], sessions: [], pairings: [] }; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; db = { encounters: [], sessions: [] }; }
     db.sessions = db.sessions.filter(s => s.expires > Date.now());
-    db.pairings = db.pairings.filter(p => p.expires > Date.now());
+    // Drop legacy paired sessions to avoid widening their access during the migration.
+    delete db.pairings;
+    db.sessions = db.sessions.filter(session => !(session as Session & { encounterId?: string | null }).encounterId);
     const result = await fn(db);
     const temp = path.join(dataRoot, `db-${uid()}.tmp`);
     await writeFile(temp, JSON.stringify(db), { mode: 0o600 });
@@ -35,16 +36,16 @@ export class AppError extends Error { constructor(public status: number, message
 export function auth(db: Database, request: Request, encounterId?: string) {
   const cookie = request.headers.get("cookie")?.split(";").map(v => v.trim()).find(v => v.startsWith("aura_session="))?.slice(13);
   const session = db.sessions.find(s => s.id === cookie && s.expires > Date.now());
-  if (!session) throw new AppError(401, "Open the demo workspace or scan a fresh encounter link.");
+  if (!session) throw new AppError(401, "Open the demo workspace to start a browser session.");
   if (encounterId) {
     const e = db.encounters.find(v => v.id === encounterId);
-    if (!e || (session.encounterId ? session.encounterId !== e.id : session.owner !== e.owner)) throw new AppError(404, "Encounter not found.");
+    if (!e || session.owner !== e.owner) throw new AppError(404, "Encounter not found.");
   }
   return session;
 }
-export function createSession(db: Database, owner: string, encounterId: string | null = null) {
+export function createSession(db: Database, owner: string) {
   const id = uid();
-  db.sessions.push({ id, owner, encounterId, expires: Date.now() + 8 * 60 * 60 * 1000 });
+  db.sessions.push({ id, owner, expires: Date.now() + 8 * 60 * 60 * 1000 });
   return id;
 }
 export function checkOrigin(request: Request) {

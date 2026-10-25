@@ -18,7 +18,7 @@ Alex has a documented but unconfirmed allergy and both active and discontinued m
 - `lib/ehr/types.ts`: chart, selected-history snapshot, saved-note, provenance, and receipt types.
 - `lib/ehr/fixtures.ts`: stable fictional patient and record IDs. Existing `demo-001` and `demo-002` remain compatible.
 - `lib/ehr/adapter.ts`: local `EhrAdapter` implementation. Reads and approved-note submissions operate inside the existing storage transaction. No model generation is performed here.
-- `app/api/ehr/route.ts`: no-store chart reads authenticated by existing demo sessions. Workspace owners see their own charts; paired sessions can read only their encounter's patient chart.
+- `app/api/ehr/route.ts`: no-store chart reads authenticated by existing demo sessions. Each browser workspace can read its own fictional patient charts.
 - `chart-context`: validates consent, patient, record IDs, bounded selection, and chart version. Saves a versioned snapshot, advances encounter revision, cancels stale analysis, and revokes approval through the existing mechanism.
 - `approve-send`: validates review blockers and atomically saves approval, immutable note, and receipt. Existing `approve` / `export` clients remain supported; `export` now saves an actual local chart document.
 - `components/patient-chart.tsx` and `components/ehr-submission.tsx`: chart browsing, loading/error/refresh states, selection, exact preview, submission status, and receipts.
@@ -33,7 +33,7 @@ Each new note increments the chart version. An out-of-date selection is rejected
 
 The note and receipt are committed in the same atomic database-file replacement. A failed write commits neither. A retry after a lost response looks up the existing owner/encounter/revision/digest and returns the same receipt. The UI reports an unconfirmed submission and refreshes the encounter after errors. This is single-process local persistence, not a durable external transport queue.
 
-Demo sessions are anonymous, expire after eight hours, and do not authenticate a physician. A new anonymous workspace cannot recover the previous owner's charts. Pairing capabilities intentionally grant the paired encounter's patient chart, but no other patient's chart. A real integration needs authenticated users, vendor-specific authorization, patient matching, access scopes, mappings, transport reconciliation, and production storage.
+Demo sessions are anonymous, expire after eight hours, and do not authenticate a physician. A new anonymous workspace cannot recover the previous owner's charts. Opening the app in a separate browser or device creates a separate workspace; there is no cross-device encounter sharing. A real integration needs authenticated users, vendor-specific authorization, patient matching, access scopes, mappings, transport reconciliation, and production storage.
 
 ## Verification
 

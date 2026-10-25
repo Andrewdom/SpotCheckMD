@@ -119,3 +119,8 @@ Checks run in an isolated checkout with Node v24.22.1 and npm 11.19.1:
 - Documentation path checks and staged `git diff --check`: passed.
 
 Live AI, browser/phone capture, clinical evaluations, stale-analysis reproduction, and real EHR integration were not run. No original workspace data was used. Only AGENTS.md and this proposal are changed; application code, dependencies, and existing documentation remain unchanged.
+
+
+## Post-review implementation note
+
+The access design above describes the earlier QR-pairing baseline. QR generation, redemption, and encounter-scoped paired sessions have since been removed. The current demo uses an anonymous browser workspace cookie; opening the app on another device creates a separate workspace. This does not authenticate a clinician or provide cross-device sharing.

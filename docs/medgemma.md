@@ -222,7 +222,7 @@ Existing records remain readable: new context, provenance, warning and run field
 
 Changing context or another encounter field revokes approval and cancels an active run. Uncertainty, limited-quality evidence, edits, unresolved conflicts, and retake evidence retain their approval gates. Warning acknowledgement is an additional gate for partial failures. Review edits reopen linked conflicts. The note preview and clipboard include uncertainty/limitations/reviewer notes; copied pending lines are marked pending.
 
-The existing anonymous/QR authorization model is unchanged. A typed clinician name is not authenticated physician identity, and paired sessions can still review/approve. Do not present this as production actor authorization. The local JSON store remains single-process.
+The app uses anonymous browser workspaces with no cross-device sharing. A typed clinician name is not authenticated physician identity, and anyone using that browser workspace can review/approve. Do not present this as production actor authorization. The local JSON store remains single-process.
 
 ## Verification
 

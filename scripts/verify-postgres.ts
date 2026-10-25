@@ -75,6 +75,20 @@ await store.transaction(database => {
   current.activeAnalysis = { id: "c".repeat(32), status: "queued", queuedAt: new Date().toISOString(), attempts: 0, expiresAt: Date.now() + 60_000 };
 });
 assert.equal((await db<[{ status: string }]>`SELECT status FROM analysis_jobs WHERE run_id = ${"c".repeat(32)}`)[0].status, "queued");
+
+// The pipeline gives a transcript source the same mediaId as its audio source. Only the audio
+// source owns the stored file, so persisting must not insert a duplicate media_objects row.
+const audioMediaId = "d".repeat(32);
+await store.transaction(database => {
+  const current = database.encounters.find(item => item.id === encounter.id)!;
+  const createdAt = new Date().toISOString();
+  current.sources.push(
+    { id: "e".repeat(32), kind: "audio", label: "Encounter audio", mediaId: audioMediaId, mime: "audio/webm", createdAt },
+    { id: "f".repeat(32), kind: "transcript", label: "Unverified timestamped transcript", text: "synthetic", mediaId: audioMediaId, createdAt },
+  );
+});
+const audioRows = await db<{ kind: string }[]>`SELECT kind FROM media_objects WHERE file_key = ${audioMediaId}`;
+assert.deepEqual(audioRows.map(row => row.kind), ["audio"]);
 await closeDatabase();
 const reopened = (await import("../lib/database")).sql();
 assert.equal((await reopened<[{ count: number }]>`SELECT count(*)::int AS count FROM encounters WHERE id = ${encounter.id}`)[0].count, 1);

@@ -5,14 +5,20 @@ import { ChevronDown, ClipboardList, RefreshCw } from "lucide-react";
 import type { Encounter } from "@/lib/domain";
 import { patientAge, type PatientChart, type ChartCategory } from "@/lib/ehr/types";
 
-const tabs = ["Overview", "History", "Medications & allergies", "Results", "Visit notes"] as const;
+const tabs = ["Overview", "History", "Medications", "Allergies", "Results", "Visit notes"] as const;
 type Tab = typeof tabs[number];
-const categories: Record<Tab, ChartCategory[]> = { Overview: ["condition", "allergy"], History: ["condition", "history"], "Medications & allergies": ["medication", "allergy"], Results: ["vital", "lab"], "Visit notes": ["note"] };
+const categories: Record<Tab, ChartCategory[]> = { Overview: [], History: ["condition", "history"], Medications: ["medication"], Allergies: ["allergy"], Results: ["vital", "lab"], "Visit notes": ["note"] };
+const snapshotSections = [
+  { label: "History", categories: ["condition", "history"] as ChartCategory[] },
+  { label: "Medications", categories: ["medication"] as ChartCategory[] },
+  { label: "Allergies", categories: ["allergy"] as ChartCategory[] },
+  { label: "Results", categories: ["vital", "lab"] as ChartCategory[] },
+] as const;
 export type HistorySelection = { chartVersion: number; items: { id: string; confirmedToday: boolean }[] };
 const button = "inline-flex min-h-9 items-center justify-center rounded-xl border border-[#dfdad6] bg-white px-3 py-2 text-xs font-semibold text-[#625a57] transition hover:bg-[#faf8f6] disabled:opacity-40";
 
-export function PatientChartPanel({ patientId, encounter, full = false, disabled = false, focusNoteId, onSave, onDirtyChange }: {
-  patientId: string; encounter?: Encounter | null; full?: boolean; disabled?: boolean; focusNoteId?: string;
+export function PatientChartPanel({ patientId, encounter, stage, full = false, disabled = false, focusNoteId, onSave, onDirtyChange }: {
+  patientId: string; encounter?: Encounter | null; stage: "chart" | "capture" | "review"; full?: boolean; disabled?: boolean; focusNoteId?: string;
   onSave: (selection: HistorySelection) => Promise<boolean>; onDirtyChange: (dirty: boolean) => void;
 }) {
   const [chart, setChart] = useState<PatientChart | null>(null);
@@ -42,9 +48,10 @@ export function PatientChartPanel({ patientId, encounter, full = false, disabled
   useEffect(() => {
     if (!focusNoteId) return;
     const category = chart?.records.find(record => record.id === focusNoteId)?.category;
-    setTab(category === "medication" || category === "allergy" ? "Medications & allergies" : category === "vital" || category === "lab" ? "Results" : category === "history" || category === "condition" ? "History" : "Visit notes");
+    setTab(category === "medication" ? "Medications" : category === "allergy" ? "Allergies" : category === "vital" || category === "lab" ? "Results" : category === "history" || category === "condition" ? "History" : "Visit notes");
     setOpen(true);
   }, [focusNoteId, chart?.version]);
+  useEffect(() => { if (stage !== "chart") setOpen(false); }, [stage]);
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30000); return () => clearInterval(timer); }, []);
   const stale = chart && clock - Date.parse(chart.refreshedAt) > 300000;
   const canSelect = Boolean(encounter?.consent && encounter.patientConfirmed && !disabled && !loading && !error);
@@ -68,12 +75,24 @@ export function PatientChartPanel({ patientId, encounter, full = false, disabled
       <p><strong>{patient.name}</strong> · DOB {patient.dateOfBirth} · Age {patientAge(patient.dateOfBirth)} · {patient.mrn}</p>
       <p className="font-semibold text-amber-900">Allergies: {patient.allergyStatus === "unknown" ? "Not verified" : patient.allergyStatus === "none_known" ? "No known allergies documented" : chart.records.filter(r => r.category === "allergy").map(r => `${r.title} (${r.status.toLowerCase()})`).join(", ")}</p>
     </div>}
+    {chart && <div className="border-t border-[#ece7e3] p-4 sm:p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold">Chart at a glance</h3><p className="mt-0.5 text-[11px] text-[#817976]">From the patient record · review before using in this visit</p></div>{encounter && <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${historyChanged ? "bg-[#fff3dd] text-[#8a5c14]" : "bg-[#f0e7ed] text-[#66485d]"}`}>{historyChanged ? "Reviewed history changed" : `${savedContext?.items.length || 0} saved for note`}{dirty ? " · unsaved changes" : ""}</span>}</div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{snapshotSections.map(section => {
+        const records = chart.records.filter(record => section.categories.includes(record.category)).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+        const reviewed = records.filter(record => savedContext?.items.some(item => item.id === record.id)).length;
+        return <button key={section.label} type="button" onClick={() => { setTab(section.label); setOpen(true); }} className="min-w-0 rounded-xl border border-[#e7e2de] bg-white p-3 text-left transition hover:border-[#c9b3c1] hover:bg-[#fdfafd]" aria-label={`View ${section.label.toLowerCase()} in patient chart`}>
+          <span className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-[#514946]">{section.label}</span><span className="text-[10px] text-[#8a627d]">{records.length} {records.length === 1 ? "entry" : "entries"}</span></span>
+          <span className="mt-2 block min-h-8 text-xs leading-4 text-[#746c68]">{records.length ? records.slice(0, 2).map(record => `${record.title} (${record.status.toLowerCase()})`).join(" · ") : section.label === "Allergies" && chart.patient.allergyStatus === "unknown" ? "Not verified" : "Not documented"}</span>
+          {encounter && <span className="mt-2 block text-[10px] font-medium text-[#8a627d]">{reviewed} reviewed for this visit</span>}
+        </button>;
+      })}</div>
+    </div>}
     {(full || open) && <div className="p-5">
       <div role="tablist" aria-label="Patient chart sections" className="mb-5 flex gap-1 overflow-x-auto rounded-xl bg-[#f1efed] p-1">{tabs.map(value => <button type="button" role="tab" aria-selected={tab === value} key={value} onClick={() => setTab(value)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition ${tab === value ? "bg-white text-[#403937] shadow-sm" : "text-[#746c68] hover:text-[#403937]"}`}>{value}</button>)}</div>
       {tab === "Overview" && patient && <dl className="mb-5 grid gap-x-6 gap-y-4 rounded-xl border border-[#e7e2de] bg-[#faf9f8] p-4 text-xs sm:grid-cols-2 lg:grid-cols-3">{[
         ["Recorded sex", patient.recordedSex], ["Gender identity", patient.genderIdentity], ["Preferred language", patient.language], ["Primary clinician", patient.primaryClinician], ["Preferred pharmacy", patient.pharmacy], ["Insurance", patient.insurance], ["Phone", patient.phone], ["Address", patient.address], ["Emergency contact", patient.emergencyContact],
       ].map(([label, value]) => <div key={label}><dt className="text-slate-500">{label}</dt><dd className="mt-1 font-medium">{value || "Not documented"}</dd></div>)}</dl>}
-      {tab === "Medications & allergies" && patient?.allergyStatus === "unknown" && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Allergy history has not been verified. No allergy entries are available.</p>}
+      {tab === "Allergies" && patient?.allergyStatus === "unknown" && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Allergy history has not been verified. No allergy entries are available.</p>}
       {tab === "History" && patientId === "demo-002" && <p className="mb-4 text-xs text-slate-500">Family and surgical history: not documented.</p>}
       {tab === "Results" && !chart?.records.some(r => r.category === "lab") && <p className="mb-4 text-xs text-slate-500">Laboratory results: not documented.</p>}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{shown.map(record => {
@@ -88,7 +107,7 @@ export function PatientChartPanel({ patientId, encounter, full = false, disabled
           {encounter && !currentNote && <div className="mt-3 border-t border-slate-100 pt-3 text-xs"><label className="flex items-center gap-2"><input type="checkbox" checked={Boolean(selected)} disabled={!canSelect} onChange={event => change(event.target.checked ? [...items, { id: record.id, confirmedToday: false }] : items.filter(item => item.id !== record.id))} /> Include in reviewed history</label>{selected && <label className="mt-3 flex items-center gap-2 text-slate-600"><input type="checkbox" checked={selected.confirmedToday} disabled={!canSelect} onChange={event => change(items.map(item => item.id === record.id ? { ...item, confirmedToday: event.target.checked } : item))} /> Confirmed during this visit</label>}</div>}
         </article>;
       })}</div>
-      {!loading && !shown.length && <p className="rounded-xl bg-slate-50 p-5 text-sm text-slate-500">No records documented in this section.</p>}
+      {!loading && tab !== "Overview" && !shown.length && <p className="rounded-xl bg-[#faf9f8] p-5 text-sm text-[#817976]">No records documented in this section.</p>}
       {encounter && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e2d4dc] bg-[#faf6f9] p-4"><div><p className="text-sm font-semibold">{items.length} record{items.length === 1 ? "" : "s"} selected {dirty && "· Unsaved"}</p><p className="mt-1 text-xs text-[#746c68]">{!encounter.consent || !encounter.patientConfirmed ? "Confirm patient and consent in Capture before including history." : "Saved selections appear as reviewed chart background in the note."}</p>{historyChanged && <p className="mt-1 text-xs text-amber-800">Included history differs from the current chart. Review and save an updated selection.</p>}</div><div className="flex gap-2"><button type="button" className={button} disabled={!canSelect || !items.length} onClick={() => change([])}>Clear</button><button type="button" className={`${button} border-[#8b657e] bg-[#51384a] text-white hover:bg-[#422e3c]`} disabled={!canSelect || !dirty} onClick={() => void save()}>Save history</button></div></div>}
     </div>}
   </section>;

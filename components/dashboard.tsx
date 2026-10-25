@@ -477,7 +477,7 @@ export default function Dashboard({ physician }: { physician: { displayName: str
 
       </div>}
       {stage !== "patients" && (current?.patientId || chartPatientId) && <>
-        <PatientChartPanel key={`${current?.patientId || chartPatientId}-${current?.id || "profile"}`} patientId={current?.patientId || chartPatientId} encounter={current} full={stage === "chart"} disabled={busy || recording} focusNoteId={focusNoteId} onDirtyChange={setChartDirty} onSave={selection => act("chart-context", { selection })} />
+        <PatientChartPanel key={`${current?.patientId || chartPatientId}-${current?.id || "profile"}`} patientId={current?.patientId || chartPatientId} encounter={current} stage={stage as "chart" | "capture" | "review"} full={stage === "chart"} disabled={busy || recording} focusNoteId={focusNoteId} onDirtyChange={setChartDirty} onSave={selection => act("chart-context", { selection })} />
         {stage === "chart" && !current && <div className="mb-6 flex justify-end"><button disabled={busy} onClick={() => void create(chartPatientId)} className={primaryButton}>Start a new visit <ChevronRight size={16} /></button></div>}
       </>}
       {current && stage !== "patients" && <>
@@ -889,13 +889,14 @@ export default function Dashboard({ physician }: { physician: { displayName: str
                   </div>
                   <button onClick={() => void copyNote()} className={secondaryButton}><Clipboard size={15} />Copy {current.approval ? "approved note" : "draft"}</button>
                 </div>
-                {current.chartContext?.items.length ? (
-                  <details className="mx-5 mt-5 rounded-xl border border-[#e7e2de] bg-[#faf9f8] p-3 sm:mx-7">
-                    <summary className="cursor-pointer text-xs font-semibold text-[#75546c]">Reviewed chart background · {current.chartContext.items.length} records</summary>
-                    <p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#6f6865]">{formatChartContext(current.chartContext)}</p>
-                    <div className="mt-3 flex flex-wrap gap-2">{current.chartContext.items.map(item => <button key={item.id} type="button" onClick={() => { setFocusNoteId(item.id); setStage("chart"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-xs font-semibold text-[#75546c] underline">Open source: {item.title}</button>)}</div>
-                  </details>
-                ) : null}
+                <div className="mx-5 mt-5 rounded-xl border border-[#e7e2de] bg-[#faf9f8] p-4 sm:mx-7">
+                  <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold">Reviewed patient history</h3><p className="mt-1 text-xs text-[#817976]">{current.chartContext?.items.length ? `${current.chartContext.items.length} chart ${current.chartContext.items.length === 1 ? "item" : "items"} saved for this note` : "No chart items saved for this note"}</p></div><button type="button" disabled={busy || recording} onClick={() => { setFocusNoteId(undefined); setStage("chart"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-xs font-semibold text-[#75546c] underline">Review chart</button></div>
+                  {!!current.chartContext?.items.length && <>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">{current.chartContext.items.slice(0, 4).map(item => <button key={item.id} type="button" onClick={() => { setFocusNoteId(item.id); setStage("chart"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-[#e7e2de] bg-white p-3 text-left hover:border-[#c9b3c1]"><span className="block text-xs font-semibold">{item.title}</span><span className="mt-1 block text-[11px] text-[#817976]">{item.category} · {item.confirmedToday ? "Confirmed this visit" : "Historical chart entry"}</span></button>)}</div>
+                    {current.chartContext.items.length > 4 && <p className="mt-2 text-[11px] text-[#817976]">+{current.chartContext.items.length - 4} more reviewed {current.chartContext.items.length - 4 === 1 ? "item" : "items"}</p>}
+                    <details className="mt-3"><summary className="cursor-pointer text-xs font-semibold text-[#75546c]">View full reviewed background</summary><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#6f6865]">{formatChartContext(current.chartContext)}</p></details>
+                  </>}
+                </div>
                 <div className="px-5 py-2 sm:px-7">
                   {(["S", "O", "A", "P"] as const).map(section => {
                     const sectionFindings = current.findings.filter(f => f.section === section && (current.approval ? f.review === "accepted" : f.review !== "rejected"));

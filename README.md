@@ -43,7 +43,7 @@ Preflight checks flag low resolution, extreme lighting, and low edge detail. The
 
 On the review screen, **Replay evidence** opens a read-only view of where each note sentence came from. Selecting a sentence plays the cited span of the recording (from the stored word timings), highlights those words in the transcript, and opens the cited photo beside the model-written description it was based on. Colored routes link each source to its sentences by review outcome, and a seal shows whether the approved note's SHA-256 digest, recomputed in the browser, still matches the server record or was revoked by a later edit.
 
-It only re-arranges data the encounter already stores and fetches media through the existing session-checked media route. It draws no regions on photos, invents no timings, and treats provider word confidence as speech-recognition confidence, not clinical confidence. Transcripts without word-level timing (for example from the OpenAI fallback) show quotes without playback. The seal is display-only and the typed signature is not an authenticated identity. See `docs/evidence-replay-plan.md`.
+It only re-arranges data the encounter already stores and fetches media through the existing session-checked media route. It draws no regions on photos, invents no timings, and treats provider word confidence as speech-recognition confidence, not clinical confidence. Transcripts without word-level timing (for example from the OpenAI fallback) show quotes without playback. The seal is display-only and the typed signature is not an authenticated identity. See `docs/evidence-replay.md` for how to use it and `docs/evidence-replay-plan.md` for the design record.
 
 ## Data and security boundaries
 

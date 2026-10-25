@@ -25,12 +25,12 @@ export default function SignInPage() {
   }
   return <main className="grid min-h-screen bg-[#f8f7f5] text-[#292524] lg:grid-cols-[minmax(0,1.2fr)_minmax(420px,.8fr)]">
     <section className="hidden border-r border-[#e6e1dd] bg-[#f2efed] p-12 lg:flex lg:flex-col lg:justify-between">
-      <div className="flex items-center gap-3"><span className="flex size-10 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={20} /></span><div><p className="text-base font-bold tracking-[.12em]">AURA</p><p className="text-[11px] text-[#77706d]">Clinical workspace</p></div></div>
+      <div className="flex items-center gap-3"><span className="flex size-10 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={20} /></span><div><p className="text-base font-bold tracking-[.08em]">Spot Check MD</p><p className="text-[11px] text-[#77706d]">Clinical workspace</p></div></div>
       <div className="max-w-xl"><p className="text-sm font-medium text-[#716966]">Your clinical workspace</p><h1 className="mt-3 text-5xl font-semibold tracking-[-.045em]">Your notes, ready when you are.</h1><p className="mt-5 max-w-lg text-sm leading-7 text-[#77706d]">Consultation audio, images, chart context, evidence review, and SOAP documentation stay together across signed-in devices.</p></div>
       <p className="text-xs text-[#918986]">Synthetic demonstration</p>
     </section>
     <section className="flex items-center justify-center px-5 py-12 sm:px-10"><div className="w-full max-w-md">
-      <div className="mb-10 flex items-center gap-3 lg:hidden"><span className="flex size-10 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={20} /></span><p className="font-bold tracking-[.12em]">AURA</p></div>
+      <div className="mb-10 flex items-center gap-3 lg:hidden"><span className="flex size-10 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={20} /></span><p className="font-bold tracking-[.08em]">Spot Check MD</p></div>
       <span className="flex size-11 items-center justify-center rounded-2xl bg-[#f0e7ed] text-[#66485d]"><LockKeyhole size={20} /></span>
       <h2 className="mt-6 text-3xl font-semibold tracking-[-.035em]">Welcome back</h2>
       <p className="mt-2 text-sm text-[#817976]">Sign in with your physician account.</p>

@@ -1,6 +1,14 @@
 # Evidence Replay: implementation plan
 
-Status: **proposed, not implemented.** Branch: `feature/evidence-replay`. This document is the build plan; nothing described below exists in the app yet.
+Status: **implemented** on `feature/evidence-replay`. This document began as the build plan and is kept as the design record; the section below lists where the implementation differs from it.
+
+### Implementation notes (differences from the original plan)
+
+- The audio hook lives in its own file, `components/use-replay-audio.ts`, to keep `components/evidence-replay.tsx` readable.
+- A transcript-context quote on a *visual* finding is located in the transcript when it can be, so it gets a timeline band and a "Context · Audio" chip. It stays labeled "Transcript context — not visual proof".
+- Provenance routes are drawn as lane-routed paths (down out of the source panel, along a private lane, then down the empty left gutter into the sentence) instead of single Bézier curves, because direct curves crossed sentence text. They sit above the cards, inactive routes are faint, and they are hidden below 1024 px where sources show as chips.
+- While verifying against PostgreSQL, a separate bug surfaced and was fixed on `fix/transcript-media-object`: persisting an encounter with a recording inserted the audio file key twice (the transcript source reuses the audio `mediaId`), failing with a primary-key violation. `scripts/verify-postgres.ts` now covers it.
+- Verified in headless Chromium (desktop, 1024 px, 390 px) against a synthetic encounter: waveform decode, playback and playhead, word highlighting, low-confidence marking, photo evidence, edited-wording notice, Escape to stop, rejected toggle, browser-verified seal, revoked seal after an edit, empty encounter, `no-store` media only, no new API calls, no `localStorage`/`sessionStorage`, no console errors, no horizontal scroll. Not verified: Safari/iOS (the `<audio>` fallback path), real AssemblyAI audio, and real MedGemma output.
 
 ## 1. Goal
 

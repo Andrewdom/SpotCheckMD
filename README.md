@@ -8,7 +8,7 @@ The application uses **MedGemma 1.5 4B as its only image-analysis provider**. It
 
 ## Current workflow
 
-1. Open the app in the phone or desktop browser. Each browser gets its own anonymous workspace. There is no QR pairing and no encounter synchronization between devices.
+1. Sign in with a manually seeded physician account. The same account can access its organization-scoped fictional encounter workspace from phone and desktop. There is no public registration or QR pairing.
 2. Select one of the fictional Demo EHR patients, review its chart, start an encounter, and confirm the demo patient and consent.
 3. Capture images using the browser camera or upload them. Optionally record/upload doctor-only dictation. The AssemblyAI workflow expects the doctor to speak alone; recordings with multiple detected voices are rejected. Live captions are provisional; the completed post-visit transcript is authoritative.
 4. Set the specialty, image type, and any explicitly confirmed context. MedGemma analyzes each image separately and may use bounded transcript windows as context. Transcript statements are not visual evidence.
@@ -22,14 +22,16 @@ Requirements: Node.js 20.9 or newer. The web app can run without a local model, 
 ```powershell
 npm ci
 Copy-Item .env.example .env.local
+npm run db:migrate
+npm run db:seed
 npm run dev
 ```
 
-Open `http://localhost:3000` on the development computer. Configure `MEDGEMMA_URL` and `MEDGEMMA_API_KEY` in the ignored `.env.local` file; obtain the existing service key through the team's secure channel. Never commit, paste, print, or expose credentials to browser code. See [MedGemma setup](docs/medgemma.md).
+Start PostgreSQL with `compose.dev.yaml` or another private local instance, then set `DATABASE_URL` and `AUTH_RATE_LIMIT_SECRET` in `.env.local` before migrating and seeding. Open `http://localhost:3000` on the development computer and sign in with the seeded account. Configure `MEDGEMMA_URL` and `MEDGEMMA_API_KEY` in the ignored `.env.local` file; obtain the existing service key through the team's secure channel. Never commit, paste, print, or expose credentials to browser code. See [PostgreSQL/authentication setup](docs/postgres-auth.md) and [MedGemma setup](docs/medgemma.md).
 
 For AssemblyAI Medical Mode, set `TRANSCRIPTION_PROVIDER=assemblyai` and a server-only `ASSEMBLYAI_API_KEY`. The default transcript-documentation behavior without an OpenAI key is local extractive/manual: review the transcript and add clinician-authored SOAP findings yourself. It does not automatically summarize or classify speech into SOAP sections. Audio recording requires browser microphone permission and localhost or HTTPS.
 
-The shared Unraid deployment uses a production Docker image, persistent demo storage, private loopback MedGemma connectivity, durable queued analysis, and the existing Cloudflare Tunnel. See [Unraid web deployment and operations](docs/unraid-web-deployment.md).
+The shared Unraid deployment uses a production Docker image, PostgreSQL-backed physician sessions and encounter state, private filesystem media, private loopback MedGemma connectivity, durable queued analysis, and the existing Cloudflare Tunnel. See [physician authentication and PostgreSQL](docs/postgres-auth.md) and [Unraid web deployment and operations](docs/unraid-web-deployment.md).
 
 ## Image handling and analysis
 
@@ -39,9 +41,9 @@ Preflight checks flag low resolution, extreme lighting, and low edge detail. The
 
 ## Data and security boundaries
 
-By default, encounter state, transcripts, inference images, previews, and audio are stored in `.aura-data/`, ignored by Git. `AURA_DATA_DIR` can override that location. This is local JSON/media storage with a process-local lock, not durable encrypted or multi-replica production storage. Anonymous browser sessions last up to eight hours. Each browser/device has a separate workspace.
+PostgreSQL stores physician sessions, encounter state, transcripts, analysis jobs, review decisions, approved snapshots, audit events, and simulated EHR records. Private image and audio bytes remain under `.aura-data/media/` by default; `AURA_DATA_DIR` can override that location. Sessions last up to twelve hours and can coexist on multiple devices. The aggregate transaction layer and inference worker still support one web container.
 
-The Demo EHR contains fictional charts only. There is no clinician authentication, production authorization, external EHR adapter, FHIR connection, validated audit system, or production retention policy. The consent screen and free-text clinician name do not establish a patient's or clinician's real identity. Before any real-patient use, the project requires appropriate clinical, privacy, security, legal, and regulatory review, approved hosting and storage, real identity and authorization controls, audit/retention controls, and a validated EHR integration.
+The Demo EHR contains fictional charts only. The physician login is an MVP identity boundary, not a production identity provider. There is no external EHR adapter, FHIR connection, validated audit system, or production retention policy. Before any real-patient use, the project requires appropriate clinical, privacy, security, legal, and regulatory review, approved hosting and storage, stronger identity lifecycle and authorization controls, audit/retention controls, and a validated EHR integration.
 
 ## Development checks
 

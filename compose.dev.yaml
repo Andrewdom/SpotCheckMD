@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: spotcheckmd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in an ignored local environment file}
+      POSTGRES_DB: spotcheckmd
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - spotcheckmd_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spotcheckmd -d spotcheckmd"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  spotcheckmd_postgres:

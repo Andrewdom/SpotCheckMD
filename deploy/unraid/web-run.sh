@@ -8,6 +8,8 @@ config="$base/config/web.env"
 
 test -r "$config"
 grep -q '^MEDGEMMA_API_KEY=.' "$config"
+grep -q '^DATABASE_URL=.' "$config"
+grep -q '^AUTH_RATE_LIMIT_SECRET=.' "$config"
 mkdir -p "$base/data" "$base/cache"
 chown -R 1001:1001 "$base/data" "$base/cache"
 

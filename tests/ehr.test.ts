@@ -25,7 +25,8 @@ before(async () => {
 after(async () => { await fs.rm(directory, { recursive: true, force: true }); });
 
 async function session() {
-  let cookie = "";
+  const token = await store.transaction(db => store.createSession(db, store.uid()));
+  let cookie = `aura_session=${token}`;
   async function action(name: string, data: Record<string, unknown> | FormData, customCookie = cookie) {
     const response = await api.POST(new Request(`${origin}/api/demo?action=${name}`, {
       method: "POST", headers: { Origin: origin, Cookie: customCookie, ...(data instanceof FormData ? {} : { "Content-Type": "application/json" }) },
@@ -34,7 +35,6 @@ async function session() {
     if (response.headers.has("set-cookie")) cookie = response.headers.get("set-cookie")!.split(";")[0];
     return { status: response.status, body: await response.json() };
   }
-  await action("bootstrap", {});
   let encounter = (await action("create", { patientId: "demo-001" })).body.encounter as Encounter;
   return {
     action, get e() { return encounter; }, get cookie() { return cookie; },

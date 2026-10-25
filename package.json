@@ -8,11 +8,17 @@
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "generate:contracts": "tsx scripts/generate-image-contract.ts"
+    "generate:contracts": "tsx scripts/generate-image-contract.ts",
+    "db:migrate": "tsx scripts/migrate-postgres.ts",
+    "db:seed": "tsx scripts/seed-physician.ts",
+    "db:import-legacy": "tsx scripts/import-legacy.ts",
+    "test:postgres": "tsx scripts/verify-postgres.ts"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
     "lucide-react": "^0.468.0",
     "next": "16.4.3",
+    "postgres": "^3.4.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "sharp": "^0.35.5",

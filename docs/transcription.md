@@ -18,7 +18,7 @@ SOAP_DOCUMENTATION_PROVIDER=extractive
 
 `SOAP_DOCUMENTATION_PROVIDER=extractive` is the zero-cost default when `OPENAI_API_KEY` is absent. It does not classify transcript sentences into SOAP sections or create findings automatically. Review the finalized doctor-dictation transcript and add exact, clinician-authored statements manually to the appropriate section. It performs no diagnosis, clinical summarization, medication reconciliation, assessment, or plan generation. Set the provider to `openai` only when a server-side OpenAI key is configured and its external processing is authorized.
 
-Before processing PHI, execute the appropriate AssemblyAI BAA and configure data retention, model-training opt-out, region, deletion, access control, audit, and incident-response requirements for the intended deployment. The local demo's anonymous sessions, JSON storage and free-text clinician identity are not production controls.
+Before processing PHI, execute the appropriate AssemblyAI BAA and configure data retention, model-training opt-out, region, deletion, access control, audit, and incident-response requirements for the intended deployment. The MVP physician login, PostgreSQL deployment, fictional Demo EHR and free-text note signature are not production controls.
 
 ## Authoritative post-visit flow
 

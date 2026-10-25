@@ -1,45 +1,71 @@
-# Aura Visual Scribe — hackathon research prototype
+# SpotCheckMD
 
-A Next.js demo for a fictional patient-linked capture → review → approval workflow. **Use fictional dialogue and non-patient images only.** This is not an authenticated EHR, clinical software, or a HIPAA-compliant deployment.
+SpotCheckMD is a hackathon research prototype for physician-reviewed, evidence-linked SOAP documentation. A clinician can capture or upload images and doctor-only dictation in a phone or desktop browser, review model suggestions with their source evidence, and approve a note into the fictional Demo EHR.
 
-For teammates and their coding assistants, see the shareable [LLM handoff](docs/LLM_HANDOFF.md) for project context, implementation status, known failures, and continuation instructions. Read `AGENTS.md` before contributing.
+The application uses **MedGemma 1.5 4B as its only image-analysis provider**. It does not switch to another image model if MedGemma fails. Audio transcription is a separate, provider-selected feature; AssemblyAI Medical Mode is supported, and legacy OpenAI transcription/documentation options remain configurable. See [transcription setup](docs/transcription.md).
 
-## Run
+> **Research prototype only.** Use fictional encounters and staged, non-patient images and audio, or other media with explicit authorization for the intended processing. This is not a clinically validated product, authenticated EHR, or HIPAA-compliant deployment. Do not use it for diagnosis, treatment decisions, or real patient records.
 
-Use Node.js 20.9 or newer:
+## Current workflow
 
-```bash
+1. Open the app in the phone or desktop browser. Each browser gets its own anonymous workspace. There is no QR pairing and no encounter synchronization between devices.
+2. Select one of the fictional Demo EHR patients, review its chart, start an encounter, and confirm the demo patient and consent.
+3. Capture images using the browser camera or upload them. Optionally record/upload doctor-only dictation. The AssemblyAI workflow expects the doctor to speak alone; recordings with multiple detected voices are rejected. Live captions are provisional; the completed post-visit transcript is authoritative.
+4. Set the specialty, image type, and any explicitly confirmed context. MedGemma analyzes each image separately and may use bounded transcript windows as context. Transcript statements are not visual evidence.
+5. Review the finalized transcript and every pending suggestion. Inspect the original image, linked evidence, uncertainty and limitations. Edit, accept, or reject each suggestion, resolve conflicts, and add clinician-authored findings manually as needed.
+6. Preview the note and approve it for the fictional Demo EHR. This is a local simulation; it does not send data to an external EHR or FHIR endpoint.
+
+## Run locally
+
+Requirements: Node.js 20.9 or newer. The web app can run without a local model, but image analysis requires access to the authenticated MedGemma service. To test a phone, use an address reachable from the phone over HTTPS; `localhost` on a phone refers to the phone itself.
+
+```powershell
 npm ci
+Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open http://localhost:3000. MedGemma is the application image-analysis provider by default; copy `.env.example` to ignored `.env.local`, obtain the shared server key securely, and connect to the team Tailscale network. Image-only analysis does not require an OpenAI key and never falls back to GPT-4o. Set `TRANSCRIPTION_PROVIDER=assemblyai` with a server-only `ASSEMBLYAI_API_KEY` to use Medical Mode, one-speaker doctor diarization, timestamps, key terms and provisional live captions. Audio is treated as doctor dictation; do not record the patient's voice. In free local mode, review the transcript and add each clinician-authored finding to the appropriate SOAP section manually. Never commit, upload, or paste credentials. See [AssemblyAI transcription setup](docs/transcription.md) and [MedGemma setup and limitations](docs/medgemma.md). Audio recording requires localhost or HTTPS and browser permission. Mobile `capture="environment"` behavior varies by browser.
+Open `http://localhost:3000` on the development computer. Configure `MEDGEMMA_URL` and `MEDGEMMA_API_KEY` in the ignored `.env.local` file; obtain the existing service key through the team's secure channel. Never commit, paste, print, or expose credentials to browser code. See [MedGemma setup](docs/medgemma.md).
 
-JPEG and PNG uploads default to a configurable 50 MB and 60-megapixel limit. SpotCheckMD applies EXIF orientation and stores a metadata-stripped, lossless PNG inference copy at the oriented source dimensions, plus a separate compressed preview. The full-resolution copy reaches the MedGemma service over authenticated multipart transport; MedGemma then normalizes every image to 896 × 896 and 256 vision tokens internally, so this is not native-resolution model processing. HEIC/HEIF is not accepted because decoder support is not consistent across the supported development machines.
+For AssemblyAI Medical Mode, set `TRANSCRIPTION_PROVIDER=assemblyai` and a server-only `ASSEMBLYAI_API_KEY`. The default transcript-documentation behavior without an OpenAI key is local extractive/manual: review the transcript and add clinician-authored SOAP findings yourself. It does not automatically summarize or classify speech into SOAP sections. Audio recording requires browser microphone permission and localhost or HTTPS.
 
-Intel Macs can explicitly select the [experimental quantized CPU backend](docs/medgemma.md#experimental-intel-mac--native-cpu-backend). It converts authorized official weights locally and records conversion/runtime provenance. This is a separate runtime from the default Transformers service; quantization may change output quality and does not establish clinical validity.
+## Image handling and analysis
 
-## Demo journey
+The app accepts JPEG and PNG. Defaults are 50 MB and 60 megapixels for app uploads, with a separately configurable inference-service size limit. It applies EXIF orientation, removes image metadata, stores a lossless oriented PNG for inference, and creates a separate compressed preview. The inference image retains its oriented pixel dimensions in transport; the MedGemma service resizes it to 896 × 896 and uses 256 vision tokens internally. This is not native-resolution model perception. HEIC/HEIF is not accepted.
 
-1. Open one of two fictional patient charts in **Demo EHR**. Review demographics, medications, allergies, history, dated results, and prior notes. Start a visit and confirm patient and all-party recording/processing consent. Select relevant history in the chart panel and save the reviewed selection.
-2. Open the deployed app directly in the phone browser, using its HTTPS URL. The phone browser creates its own anonymous workspace; its camera and microphone capture directly into that workspace. On a laptop, localhost refers only to that laptop. This prototype has **no clinician authentication**.
-3. Capture staged images and/or short fictional audio. Photos are EXIF-oriented and stored as metadata-stripped, lossless full-dimension PNG inference copies; the UI uses separate previews. Brightness, detail, and resolution heuristics warn when to retake; they cannot certify image quality.
-4. Save the selected specialty, image type, and any explicitly confirmed location/context, then run analysis. With AssemblyAI selected, provisional streaming captions are replaced by an immutable post-visit transcript with speaker turns, word timestamps and confidence. The audio workflow expects the doctor to be the sole speaker. It detects and rejects recordings with multiple voices; review the transcript and add clinician-authored findings to the appropriate SOAP sections. Review every atomic suggestion with exact transcript/image evidence, uncertainty/quality flags, timestamps and an editable reviewer note. The system flags a basic left/right discrepancy, but humans must check for all other contradictions. Reject findings from photos marked `retake`; explain uncertain or edited findings.
-5. Accept or reject every suggestion, resolve flagged conflicts, acknowledge partial-analysis warnings, and preview the exact note. Enter a demo clinician name and choose **Approve & send to Demo EHR**. The approved note is saved into this workspace’s fictional patient chart; its receipt opens the saved document. Later edits require approval and create a linked amendment. See [Demo EHR details](docs/ehr-demo.md).
+Preflight checks flag low resolution, extreme lighting, and low edge detail. These are heuristics, not image-quality certification. The model is asked for structured visible observations and limitations, not lesion diagnoses, malignancy estimates, measurements, or treatment recommendations. The schema and evidence checks can catch malformed output and invalid source references; they cannot guarantee clinical correctness. Certainty tags are not calibrated probabilities. A physician must inspect every original image and verify every proposed statement.
 
-Drafts, transcripts, lossless inference images, preview images, and audio are stored in `.aura-data/` on the local server, ignored by git. Delete that directory to remove this demo's stored data. Do not treat this as a privacy/retention policy for real patient records. Server state is a local JSON file with a single-process write lock; it is not safe for multiple server replicas or production. Sessions are anonymous browser cookies and remain in that browser for up to eight hours. Opening the app in a different browser or device starts a separate workspace; there is no cross-device encounter sharing.
+## Data and security boundaries
 
-## Visual algorithm
+By default, encounter state, transcripts, inference images, previews, and audio are stored in `.aura-data/`, ignored by Git. `AURA_DATA_DIR` can override that location. This is local JSON/media storage with a process-local lock, not durable encrypted or multi-replica production storage. Anonymous browser sessions last up to eight hours. Each browser/device has a separate workspace.
 
-- **Preflight:** decode/rotate, strip metadata, resize, and flag low resolution, extreme lighting, and low edge detail. This heuristic can misclassify uniform images or miss blur/glare; retake advice is advisory.
-- **Constrained multimodal suggestion:** send each photo with its source ID and quality warnings, plus a separate transcript source, to a vision model. Request strict structured, atomic observations. Image-derived suggestions are limited to visible descriptors; no lesion diagnosis, malignancy probability, unmeasured size, or treatment is inferred.
-- **Evidence binding:** validate returned source IDs against stored media/transcript, require a quote/visible-region descriptor for each, and verify transcript quotes occur in the transcript. Keep suggestions pending; prevent approval with pending claims, missing evidence, unresolved conflicts, or unsupported image quality.
-- **Review/export:** clinician controls the wording and approval; the SOAP draft carries source IDs. Approved notes are saved idempotently into the local Demo EHR chart with their history snapshot and model provenance. The adapter currently implements local simulation; no external EHR is connected.
+The Demo EHR contains fictional charts only. There is no clinician authentication, production authorization, external EHR adapter, FHIR connection, validated audit system, or production retention policy. The consent screen and free-text clinician name do not establish a patient's or clinician's real identity. Before any real-patient use, the project requires appropriate clinical, privacy, security, legal, and regulatory review, approved hosting and storage, real identity and authorization controls, audit/retention controls, and a validated EHR integration.
 
-The model's `observed/uncertain/not assessable` tags are **not calibrated confidence scores**, and source IDs do not prove that an image claim is true. The doctor must inspect the actual photo. Phone zoom cannot measure lesion size. The first AI version is a guarded documentation workflow, not a trained dermatology classifier.
+## Development checks
 
-## Validation and next work
+```powershell
+npm run typecheck
+npm test
+npm run build
+```
 
-`npm test`, `npm run typecheck`, `npm run build`, and `node scripts/smoke.cjs` with the app running exercise the direct browser workspace, consent, media authorization, image-quality warning, and approval/export gate. Live transcription, model output quality, browser/phone capture, and real EHR integration require separate testing. The [evaluation protocol](evals/README.md) defines stratified review across skin tones, lighting, accents, and terminology; no clinical performance has been established.
+For the synthetic API workflow check, start the app and run:
 
-Before any real-patient pilot: implement real clinician authentication and role/encounter authorization, approved hosting/storage and retention, vendor agreements and privacy review, secure media handling and audit controls, validated conflict detection, and a genuine EHR sandbox adapter with FHIR identity matching and idempotent writes. Obtain clinical/regulatory review of intended image-analysis claims.
+```powershell
+node scripts/smoke.cjs
+```
+
+These checks validate software contracts and demo workflow behavior. They do not establish clinical accuracy, fairness, diagnostic performance, or readiness for care. See the [evaluation guide](evals/README.md). Read [AGENTS.md](AGENTS.md) before contributing.
+
+## MedGemma 1.5 reference
+
+The image-analysis integration uses MedGemma 1.5 4B. See [the technical report](https://arxiv.org/abs/2604.05081), [MedGemma setup](docs/medgemma.md), and the applicable [HAI-DEF terms](https://developers.google.com/health-ai-developer-foundations/terms).
+
+```bibtex
+@article{sellergren2026medgemma,
+  title={MedGemma 1.5 Technical Report},
+  author={Sellergren, Andrew and Gao, Chufan and Mahvar, Fereshteh and Kohlberger, Timo and Jamil, Fayaz and Traverse, Madeleine and Tono, Alberto and Sadjad, Bashir and Yang, Lin and Lau, Charles and others},
+  journal={arXiv preprint arXiv:2604.05081},
+  year={2026}
+}
+```

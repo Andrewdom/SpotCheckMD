@@ -1,84 +1,65 @@
-# Evaluation protocol (not yet run)
+# SpotCheckMD evaluation guide
 
-Use fictional or appropriately licensed cases with permission for the model service. Record independent clinician annotations before reading AI output, then adjudicate disagreements. Do not use a model's own description as ground truth.
+This guide covers research evaluation of SpotCheckMD's MedGemma 1.5 4B image-analysis workflow and its separate doctor-dictation workflow. No clinical performance has been established. Use fictional cases or data whose licenses, consent, and approvals explicitly permit the specific processing and evaluation. Keep images, audio, transcripts, manifests, and case-level results outside the repository.
 
-For each case, record non-identifying skin-tone category from the source dataset or a standardized human annotation (never infer race from a photo), lighting condition, speaker accent if applicable, and clinical-terminology difficulty. Use `not-applicable` for audio-only or non-skin cases. Include diverse skin tones, phones, lighting, blur, and accent/terminology combinations; do not treat the sample sizes of these small strata as proof of fairness. Avoid repeating a patient's images across train/test subsets if a model is ever trained.
+Do not use model output as ground truth. Have qualified clinicians independently annotate reference findings before reviewing model responses, then adjudicate disagreements. A patient's or doctor's text can focus image review, but transcript content is not evidence that a feature is visible in an image.
 
-Count one atomic observation per finding: `expected` human-reference visible/spoken facts, `supported` generated facts backed by the source, `unsupported` generated facts lacking support, `missed` reference facts absent, and `corrected` generated facts changed by the clinician. For transcription terminology, record `totalTranscriptTerms` and `missedTranscriptTerms` against a human transcript. Also track retake detection precision/recall and time to review outside this simple report. Evaluate both the visual and audio parts, and compare direct image-to-note against evidence-linked review on the same cases. Report denominators with subgroup rates.
+## Evaluation design
 
-Create `reviewed-cases.json` as an array like the schema below (this **example is fictional and not a result**):
+- Compare MedGemma on the same image with and without the clinician's context. Keep image bytes, preprocessing, quality flags, specialty, and image type identical; remove only the transcript/context under study.
+- Score atomic claims for visual support, unsupported additions, missed visible findings, incorrect laterality, transcript-attribution errors, missed negation, inferred history/time, image limitations, and clinician corrections.
+- Evaluate transcript quality separately against a human-checked transcript. The current AssemblyAI path is configured for doctor-only dictation and rejects audio when multiple voices are detected. Treat live captions as provisional, not as the transcript ground truth.
+- Include image-quality conditions, capture devices, lighting, and skin-tone groups when relevant. Record how group labels were obtained; never infer race from an image. Small strata are not evidence of fairness.
+- Keep all images from a case/patient in one data split. If training is later attempted, reserve a patient-level test set before training and do not tune on it.
+- Record model revision, MedGemma runtime/backend, quantization, prompt version, preprocessing, failures, latency, and cost assumptions. Report every numerator with its denominator and subgroup sample count. Certainty labels are not calibrated probabilities.
 
-```json
-[{"id":"fictional-001","reviewed":true,"skinTone":"dark","lighting":"low","accent":"regional","terminology":"complex","expected":4,"supported":3,"unsupported":1,"missed":1,"corrected":1,"totalTranscriptTerms":5,"missedTranscriptTerms":1}]
-```
+## Summarize clinician review
 
-Run `node scripts/evaluate.mjs evals/reviewed-cases.json`. Do not put identifying clinical data or actual patient photos in this repository. No fairness or clinical accuracy claim should be made until enough independently labeled data and appropriate review exist.
-
-## Three-way image-analysis comparison
-
-This path has not produced clinical results. Use the same authorized encounters and independently annotated visible characteristics for all variants:
-
-1. `gpt4o-context`: the optional GPT-4o image provider with transcript context.
-2. `medgemma-image-only`: official MedGemma 1.5 4B without a transcript.
-3. `medgemma-context`: the same MedGemma model with transcript context.
-
-All arms use the same normalized image, quality flags, declared specialty/image type and confirmed clinician context. The image-only arm removes only the transcript. To test strictly image-only rather than this controlled transcript ablation, leave `anatomicalLocation` and `physicianContext` empty in every arm. The GPT-4o adapter uses the new common observation schema/prompt; it is not a byte-identical replay of the historical `visual-v1` prompt. Keep that distinction in reports. Existing transcript SOAP generation is excluded from visual-quality scoring.
-
-The MedGemma arms use the explicitly configured service backend. For the experimental native CPU backend, report Q4_K_M text quantization, F16 vision projection, source/converter/runtime revisions, and artifact hashes from the saved `runtime` metadata. Do not label those runs as full-precision Transformers inference or combine runtimes silently. The separate local synthetic-diagram verification is a technical check and provides no clinician-reviewed comparison metrics.
-
-Create a private manifest outside source control. The following is a **fictional schema example, not an evaluated encounter**:
+`scripts/evaluate.mjs` aggregates human-reviewed counts; it does not run models or determine whether a claim is correct. Use non-identifying synthetic case IDs. The following is a fictional format example, not an evaluation result:
 
 ```json
 [
   {
     "id": "fictional-001",
-    "authorizedForModelProcessing": true,
-    "imagePath": "authorized-example.jpg",
-    "transcript": "Patient reports no pain. Clinician describes the staged image.",
-    "context": {
-      "specialty": "general",
-      "imageType": "clinical_photo",
-      "anatomicalLocation": "",
-      "physicianContext": ""
-    }
+    "reviewed": true,
+    "skinTone": "dark",
+    "lighting": "low",
+    "accent": "not-applicable",
+    "terminology": "not-applicable",
+    "expected": 4,
+    "supported": 3,
+    "unsupported": 1,
+    "missed": 1,
+    "corrected": 1,
+    "totalTranscriptTerms": 0,
+    "missedTranscriptTerms": 0
   }
 ]
 ```
 
-Image paths resolve relative to the manifest. Confirm permissions for every external provider before setting the authorization flag. Configure OpenAI and the private MedGemma service as described in [setup](../docs/medgemma.md); never put credentials in the manifest. This command makes real model calls and can incur charges:
+Run the summary with:
 
-```sh
-npx tsx scripts/compare-image-analysis.ts /private/path/cases.json .aura-data/comparison-run-001 --run-live
+```powershell
+node scripts/evaluate.mjs evals/reviewed-cases.json
 ```
 
-Use a fresh output directory. The runner refuses to overwrite an existing result file. It rotates variant order across cases, records input digests, prompt/model revisions, transcript ranges, complete structured outputs, elapsed wall time and partial failures. It does not train or grade models. Model/context windows can create repeated observations: clinicians should count unique atomic visible claims per image, including contradictions, rather than counting duplicated phrases. Failure records must not disappear from the report. No real run was performed for this implementation.
+Never store identifying clinical information or patient photos in this repository. Report failed model runs separately; do not count a failure as a perfect empty response. No clinical accuracy, safety, or fairness claims should be made from a small technical sample.
 
-Blind/shuffle outputs for independent clinician review and retain the blinded mapping privately. Separate directly supported image characteristics from merely repeated transcript statements. Specifically annotate transcript-induced unsupported claims, missed negations, incorrect laterality, inferred temporal changes, unassessable images, conflicts and corrections. Include specialty/modality, skin-tone where applicable, quality/acquisition device, accent and terminology strata; report their sample sizes. Model certainty is not a probability. Compare contextual/noncontextual output within each case, not different case populations.
+## MedGemma technical verification
 
-Prepare a separate reviewed JSON array with one row per case/variant using this shape (values below are arithmetic examples only):
+For an authorized single-case integration check, the repository provides `scripts/verify-scin-medgemma.ts` for SCIN and `scripts/verify-local-medgemma.ts` for a generated non-patient image. See the exact setup and commands in [MedGemma documentation](../docs/medgemma.md). Keep SCIN media, metadata, manifests, and reports private and follow the [SCIN Data Use License](https://github.com/google-research-datasets/scin/blob/main/LICENSE). The SCIN workflow must not send images to an external provider or include dermatologist labels in model input. Its demographic and symptom metadata has limitations and is not a substitute for clinician-authored visual descriptions.
 
-```json
-{
-  "caseId": "fictional-001",
-  "variant": "medgemma-context",
-  "status": "success",
-  "reviewed": true,
-  "expected": 4,
-  "supported": 3,
-  "unsupported": 1,
-  "missed": 1,
-  "corrected": 1,
-  "latencyMs": 100,
-  "costUsd": null
+A contract-valid response establishes only that transport, generation, parsing, and evidence validation succeeded for that input. It does not establish clinical accuracy. The general `scripts/compare-image-analysis.ts` research utility retains a legacy OpenAI comparison adapter; it is not used by the app's image-analysis path. The product workflow is MedGemma-only for images. Do not use the legacy adapter with restricted datasets or include it in a MedGemma-only study.
+
+## MedGemma citation
+
+```bibtex
+@article{sellergren2026medgemma,
+  title={MedGemma 1.5 Technical Report},
+  author={Sellergren, Andrew and Gao, Chufan and Mahvar, Fereshteh and Kohlberger, Timo and Jamil, Fayaz and Traverse, Madeleine and Tono, Alberto and Sadjad, Bashir and Yang, Lin and Lau, Charles and others},
+  journal={arXiv preprint arXiv:2604.05081},
+  year={2026}
 }
 ```
 
-Each case needs all three variants and the same reference `expected` count. Count `supported`/`unsupported` against the original output before clinician corrections; `corrected` is a separate count. A successful output requires independent review. For a failed variant, use `status: "failed"`, `reviewed: false`, zero generated/correction counts and actual elapsed latency; retain the reference denominator. It is reported as a failure and excluded from successful-output quality rates, not counted as a perfect empty response. Inspect failure reasons separately.
-
-Record actual allocated hosting/inference charges or a clearly labeled estimate with its assumptions in your private experiment log, then supply `costUsd`. Include GPU rental/idle time, repeated context windows and OpenAI charges as appropriate; a local/open-weight model is not automatically free. Unknown cost stays `null`, never zero. The summary refuses to report total cost if any case cost is missing.
-
-```sh
-npx tsx scripts/summarize-comparison.ts /private/path/reviewed-comparison.json
-```
-
-This validates complete paired cases and nonnegative/consistent counts, then reports supported counts, unsupported/missed/correction numerators and denominators, failures, mean end-to-end latency and cost coverage. Run the same summary on predefined subgroup subsets and disclose small denominators; do not infer fairness or clinical validation from demo samples. Hardware, model revision, prompt version, preprocessing, warm-up/order and retries belong in the experiment log. The runner/aggregator arithmetic is mock-tested; clinical efficacy, live latency and cost remain unmeasured.
+[arXiv:2604.05081](https://arxiv.org/abs/2604.05081). Results from this prototype are not a clinical validation or performance claim.

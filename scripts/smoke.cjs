@@ -7,7 +7,10 @@ const assert = require('node:assert/strict');
     const response = await fetch(`${base}/api/demo?action=${name}`, { method: 'POST', headers: { Origin: base, ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(auth ? { Cookie: auth } : {}) }, body: body instanceof FormData ? body : JSON.stringify(body) });
     return { status: response.status, body: await response.json(), cookie: response.headers.get('set-cookie') };
   }
-  const init = await action('bootstrap', {}); cookie = init.cookie.split(';')[0];
+  assert.ok(process.env.SMOKE_USERNAME && process.env.SMOKE_PASSWORD, 'set SMOKE_USERNAME and SMOKE_PASSWORD');
+  const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: process.env.SMOKE_USERNAME, password: process.env.SMOKE_PASSWORD }) });
+  assert.equal(login.status, 200, 'physician sign-in failed');
+  cookie = login.headers.get('set-cookie').split(';')[0];
   const created = await action('create', { patientId: 'demo-001' }); let e = created.body.encounter;
   assert.equal(created.status, 200);
   assert.equal((await action('approve', { encounterId: e.id, revision: e.revision, physician: 'Dr Test' })).status, 400);

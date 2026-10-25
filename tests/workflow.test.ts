@@ -56,7 +56,9 @@ after(async () => {
 
 async function session() {
   const origin = "http://localhost:3107";
-  let cookie = "";
+  const store = await import("../lib/store");
+  const token = await store.transaction(db => store.createSession(db, store.uid()));
+  let cookie = `aura_session=${token}`;
   async function action(name: string, data: Record<string, unknown> | FormData, waitForAnalysis = true) {
     const response = await api.POST(new Request(`${origin}/api/demo?action=${name}`, { method: "POST", headers: { Origin: origin, Cookie: cookie, ...(data instanceof FormData ? {} : { "Content-Type": "application/json" }) }, body: data instanceof FormData ? data : JSON.stringify(data) }));
     if (response.headers.has("set-cookie")) cookie = response.headers.get("set-cookie")!.split(";")[0];
@@ -72,7 +74,6 @@ async function session() {
     return result;
   }
   async function reload(encounterId = e.id) { const response = await api.GET(new Request(`${origin}/api/demo`, { headers: { Cookie: cookie } })); return (await response.json()).encounters.find((v: Encounter) => v.id === encounterId) as Encounter; }
-  await action("bootstrap", {});
   let e = (await action("create", { patientId: "demo-001" })).body.encounter as Encounter;
   e = (await action("confirm", { encounterId: e.id, revision: e.revision, confirmed: true, consent: true })).body.encounter;
   async function upload(kind: "image" | "audio") {

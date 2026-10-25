@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { auth, mediaPath, respondError, transaction, AppError } from "@/lib/store";
+import { privateMedia } from "@/lib/media-storage";
+import { auth, respondError, transaction, AppError } from "@/lib/store";
 export const runtime = "nodejs";
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -11,6 +11,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       const source = e.sources.find(s => s.mediaId === id || s.previewMediaId === id);
       return source?.previewMediaId === id ? "image/jpeg" : source?.mime || "application/octet-stream";
     });
-    return new Response(new Uint8Array(await readFile(mediaPath(id))), { headers: { "Content-Type": mime, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+    return new Response(new Uint8Array(await privateMedia.read(id)), { headers: { "Content-Type": mime, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
   } catch (error) { return respondError(error); }
 }

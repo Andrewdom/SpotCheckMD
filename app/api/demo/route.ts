@@ -1,9 +1,8 @@
-import { unlink, writeFile } from "node:fs/promises";
-import { mkdir } from "node:fs/promises";
 import { assessImage, imageUploadLimitBytes } from "@/lib/analysis";
 import { kickAnalysisWorker } from "@/lib/analysis-jobs";
 import { PATIENTS, composeNote, reviewBlockers, type Encounter, type Source } from "@/lib/domain";
-import { AppError, auth, changed, checkOrigin, checkRevision, cookieHeader, createSession, dataRoot, digest, mediaPath, respondError, transaction, uid } from "@/lib/store";
+import { privateMedia } from "@/lib/media-storage";
+import { AppError, auth, changed, checkOrigin, checkRevision, digest, respondError, transaction, uid } from "@/lib/store";
 
 import { contextSchema } from "@/lib/image-analysis/contracts";
 import { demoEhr, selectedChartContext } from "@/lib/ehr/adapter";
@@ -27,13 +26,6 @@ export async function POST(request: Request) {
   try {
     checkOrigin(request);
     const action = new URL(request.url).searchParams.get("action");
-    if (action === "bootstrap") {
-      const owner = uid();
-      const session = await transaction(db => createSession(db, owner));
-      const res = Response.json({ encounters: [] });
-      res.headers.set("Set-Cookie", cookieHeader(session, request));
-      return res;
-    }
     if (action === "upload") return await upload(request);
     if (action === "analyze") return await analyze(request);
     const body = await request.json();
@@ -57,7 +49,7 @@ export async function POST(request: Request) {
       });
 
       await Promise.all(mediaIds.map(mediaId =>
-        unlink(mediaPath(mediaId)).catch(() => {}),
+        privateMedia.delete(mediaId),
       ));
       return Response.json({ deleted: true });
     }
@@ -104,7 +96,7 @@ export async function POST(request: Request) {
         return { encounter: safe(encounter), mediaIds: [source.mediaId, source.previewMediaId].filter((value): value is string => Boolean(value)) };
       });
 
-      await Promise.all(result.mediaIds.map(mediaId => unlink(mediaPath(mediaId)).catch(() => {})));
+      await Promise.all(result.mediaIds.map(mediaId => privateMedia.delete(mediaId)));
       return Response.json({ encounter: result.encounter });
     }
 
@@ -191,21 +183,25 @@ async function upload(request: Request) {
   const assessment = image ? await assessImage(original) : null;
   const mediaId = uid(), previewMediaId = image ? uid() : undefined, sourceId = uid();
   const bytes = assessment?.normalized || original;
-  const encounter = await transaction(async db => {
-    auth(db, request, id);
-    const e = db.encounters.find(v => v.id === id)!;
-    checkRevision(e, revision);
-    if (!e.consent || !e.patientConfirmed) throw new AppError(400, "Confirm the patient and capture consent first.");
-    if (!image && e.sources.some(s => s.kind === "audio")) throw new AppError(400, "This demo supports one recording per encounter. Create another encounter to record again.");
-    if (e.sources.length >= 8) throw new AppError(400, "This demo supports up to eight sources per encounter.");
-    const source: Source = { id: sourceId, kind: image ? "image" : "audio", label: image ? `Photo ${e.sources.filter(s => s.kind === "image").length + 1}` : "Encounter audio", mediaId, previewMediaId, mime: image ? assessment!.mime : file.type, originalMime: image ? file.type : undefined, byteSize: image ? bytes.length : file.size, quality: assessment?.quality, width: assessment?.width, height: assessment?.height, imagePreparation: image ? "oriented_lossless_png_metadata_stripped" : undefined, createdAt: new Date().toISOString() };
-    await mkdir(dataRoot, { recursive: true, mode: 0o700 });
-    await writeFile(mediaPath(mediaId), bytes, { flag: "wx", mode: 0o600 });
-    if (previewMediaId) await writeFile(mediaPath(previewMediaId), assessment!.preview, { flag: "wx", mode: 0o600 });
-    e.sources.push(source); e.findings = []; e.conflicts = []; e.imageAnalyses = []; e.analysisWarnings = []; e.warningsAcknowledged = false; e.activeAnalysis = undefined; e.analysis = "none"; e.analysisError = ""; changed(e, "media added");
-    return safe(e);
-  });
-  return Response.json({ encounter });
+  try {
+    await privateMedia.write(mediaId, bytes);
+    if (previewMediaId) await privateMedia.write(previewMediaId, assessment!.preview);
+    const encounter = await transaction(db => {
+      auth(db, request, id);
+      const e = db.encounters.find(v => v.id === id)!;
+      checkRevision(e, revision);
+      if (!e.consent || !e.patientConfirmed) throw new AppError(400, "Confirm the patient and capture consent first.");
+      if (!image && e.sources.some(s => s.kind === "audio")) throw new AppError(400, "This demo supports one recording per encounter. Create another encounter to record again.");
+      if (e.sources.length >= 8) throw new AppError(400, "This demo supports up to eight sources per encounter.");
+      const source: Source = { id: sourceId, kind: image ? "image" : "audio", label: image ? `Photo ${e.sources.filter(s => s.kind === "image").length + 1}` : "Encounter audio", mediaId, previewMediaId, mime: image ? assessment!.mime : file.type, originalMime: image ? file.type : undefined, byteSize: image ? bytes.length : file.size, quality: assessment?.quality, width: assessment?.width, height: assessment?.height, imagePreparation: image ? "oriented_lossless_png_metadata_stripped" : undefined, createdAt: new Date().toISOString() };
+      e.sources.push(source); e.findings = []; e.conflicts = []; e.imageAnalyses = []; e.analysisWarnings = []; e.warningsAcknowledged = false; e.activeAnalysis = undefined; e.analysis = "none"; e.analysisError = ""; changed(e, "media added");
+      return safe(e);
+    });
+    return Response.json({ encounter });
+  } catch (error) {
+    await Promise.all([privateMedia.delete(mediaId), ...(previewMediaId ? [privateMedia.delete(previewMediaId)] : [])]);
+    throw error;
+  }
 }
 async function analyze(request: Request) {
   const body = await request.json();

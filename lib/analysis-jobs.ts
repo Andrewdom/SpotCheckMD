@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
 import type { Encounter } from "./domain";
 import { suggest } from "./analysis";
 import { PROMPT_VERSION } from "./image-analysis/contracts";
 import { configuredImageProvider } from "./image-analysis/providers";
 import { analyzeEncounter } from "./image-analysis/pipeline";
-import { AppError, changed, mediaPath, transaction } from "./store";
+import { privateMedia } from "./media-storage";
+import { AppError, changed, transaction } from "./store";
 import { configuredTranscriptionProvider, transcriptionModel } from "./transcription/providers";
 import { soapDocumentationMode } from "./transcription/soap";
 
@@ -49,7 +49,7 @@ async function processJob({ snapshot, runId }: ClaimedJob) {
       provider: configuredImageProvider,
       transcriber: configuredTranscriptionProvider,
       document: soapDocumentationMode() === "extractive" ? async () => [] : (transcript, specialty) => suggest([], transcript, specialty),
-      readMedia: source => readFile(mediaPath(source.mediaId!)),
+      readMedia: source => privateMedia.read(source.mediaId!),
       ensureCurrent: () => ensureCurrent(snapshot, runId),
     });
     await ensureCurrent(snapshot, runId);

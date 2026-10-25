@@ -23,21 +23,26 @@ export default function SignInPage() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Sign-in failed."); }
     finally { setBusy(false); }
   }
-  return <main className="flex min-h-screen items-center justify-center bg-[#f3f7f7] px-5 py-12 text-slate-800">
-    <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-xl shadow-slate-200/50 sm:p-9">
-      <div className="flex items-center gap-3"><span className="rounded-xl bg-[#11383c] p-2.5 text-teal-200"><Activity size={22} /></span><div><p className="text-lg font-bold tracking-[.14em]">AURA</p><p className="text-[10px] font-medium tracking-[.17em] text-teal-700">VISUAL SCRIBE</p></div></div>
-      <div className="mt-8 flex size-11 items-center justify-center rounded-xl bg-teal-50 text-teal-800"><LockKeyhole size={21} /></div>
-      <h1 className="mt-4 text-2xl font-semibold">Physician sign-in</h1>
-      <p className="mt-2 text-sm leading-6 text-slate-500">Access your shared fictional-patient workspace from this device.</p>
-      {notice === "expired" && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Your session expired. Sign in again.</p>}
-      {notice === "signed-out" && <p className="mt-4 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm text-teal-900">You have signed out.</p>}
-      {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-      <form onSubmit={submit} className="mt-6 space-y-4">
-        <label className="block text-sm font-semibold">Username<input required autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100" /></label>
-        <label className="block text-sm font-semibold">Password<input required type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100" /></label>
-        <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-teal-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-teal-900 disabled:opacity-50">{busy && <LoaderCircle className="animate-spin" size={16} />} {busy ? "Signing in…" : "Sign in"}</button>
-      </form>
-      <p className="mt-6 border-t border-slate-100 pt-5 text-[11px] leading-5 text-slate-500">Synthetic demonstration only. Do not enter real patient information.</p>
+  return <main className="grid min-h-screen bg-[#f8f7f5] text-[#292524] lg:grid-cols-[minmax(0,1.2fr)_minmax(420px,.8fr)]">
+    <section className="hidden border-r border-[#e6e1dd] bg-[#f2efed] p-12 lg:flex lg:flex-col lg:justify-between">
+      <div className="flex items-center gap-3"><span className="flex size-10 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={20} /></span><div><p className="text-base font-bold tracking-[.12em]">AURA</p><p className="text-[11px] text-[#77706d]">Clinical workspace</p></div></div>
+      <div className="max-w-xl"><p className="text-sm font-medium text-[#716966]">Your clinical workspace</p><h1 className="mt-3 text-5xl font-semibold tracking-[-.045em]">Your notes, ready when you are.</h1><p className="mt-5 max-w-lg text-sm leading-7 text-[#77706d]">Consultation audio, images, chart context, evidence review, and SOAP documentation stay together across signed-in devices.</p></div>
+      <p className="text-xs text-[#918986]">Synthetic demonstration</p>
     </section>
+    <section className="flex items-center justify-center px-5 py-12 sm:px-10"><div className="w-full max-w-md">
+      <div className="mb-10 flex items-center gap-3 lg:hidden"><span className="flex size-10 items-center justify-center rounded-xl bg-[#51384a] text-white"><Activity size={20} /></span><p className="font-bold tracking-[.12em]">AURA</p></div>
+      <span className="flex size-11 items-center justify-center rounded-2xl bg-[#f0e7ed] text-[#66485d]"><LockKeyhole size={20} /></span>
+      <h2 className="mt-6 text-3xl font-semibold tracking-[-.035em]">Welcome back</h2>
+      <p className="mt-2 text-sm text-[#817976]">Sign in with your physician account.</p>
+      {notice === "expired" && <p className="mt-4 rounded-xl border border-[#ead8bd] bg-[#fff8eb] p-3 text-sm text-[#805b1f]">Your session expired. Sign in again.</p>}
+      {notice === "signed-out" && <p className="mt-4 rounded-xl border border-[#cfe2d4] bg-[#edf7f0] p-3 text-sm text-[#39704a]">You have signed out.</p>}
+      {error && <p role="alert" className="mt-4 rounded-xl border border-[#f1c8c2] bg-[#fff5f3] p-3 text-sm text-[#8f3d34]">{error}</p>}
+      <form onSubmit={submit} className="mt-8 space-y-4">
+        <label className="block text-xs font-semibold text-[#625a57]">Username<input required autoComplete="username" autoFocus value={username} onChange={event => setUsername(event.target.value)} className="mt-2 w-full rounded-xl border border-[#d8d1cd] bg-white px-4 py-3 text-sm font-normal outline-none focus:border-[#9a708d]" /></label>
+        <label className="block text-xs font-semibold text-[#625a57]">Password<input required type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} className="mt-2 w-full rounded-xl border border-[#d8d1cd] bg-white px-4 py-3 text-sm font-normal outline-none focus:border-[#9a708d]" /></label>
+        <button disabled={busy || !username || !password} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#51384a] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#3f2939] disabled:cursor-not-allowed disabled:opacity-40">{busy ? <LoaderCircle className="animate-spin" size={16} /> : <LockKeyhole size={16} />}{busy ? "Signing in…" : "Sign in"}</button>
+      </form>
+      <p className="mt-6 text-[11px] leading-5 text-[#918986]">Use fictional patient information in this research workspace.</p>
+    </div></section>
   </main>;
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clinicalContextDraft, clinicalContextSyncKey } from "../components/clinical-context";
+import { clinicalContextChanged, clinicalContextDraft, clinicalContextSyncKey } from "../components/clinical-context";
 
 const saved = { specialty: "dermatology" as const, imageType: "clinical_photo" as const, anatomicalLocation: "left arm", physicianContext: "Staged photo." };
 
@@ -28,4 +28,12 @@ test("an encounter without saved context follows its specialty until context is 
   assert.notEqual(clinicalContextSyncKey(skin), clinicalContextSyncKey(changed));
   assert.equal(clinicalContextDraft(skin).specialty, "skin");
   assert.equal(clinicalContextDraft(skin).imageType, "clinical_photo");
+});
+
+test("clinical context changes remain explicit until the exact saved values are restored", () => {
+  assert.equal(clinicalContextChanged(saved, saved), false);
+  assert.equal(clinicalContextChanged(saved, { ...saved, specialty: "urgent_care" }), true);
+  assert.equal(clinicalContextChanged(saved, { ...saved, imageType: "radiograph" }), true);
+  assert.equal(clinicalContextChanged(saved, { ...saved, anatomicalLocation: "left forearm" }), true);
+  assert.equal(clinicalContextChanged(saved, { ...saved, physicianContext: "Different visit context" }), true);
 });

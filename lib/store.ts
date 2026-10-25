@@ -79,7 +79,8 @@ async function postgresTransaction<T>(fn: (db: Database) => T | Promise<T>): Pro
       `;
       await tx`DELETE FROM media_objects WHERE encounter_id = ${encounter.id}`;
       for (const source of encounter.sources) {
-        if (source.mediaId) await tx`
+        // A transcript source reuses its audio source's mediaId; only the audio source owns the file.
+        if (source.mediaId && source.kind !== "transcript") await tx`
           INSERT INTO media_objects (file_key, source_id, encounter_id, organization_id, physician_id, kind, mime, byte_size, created_at)
           VALUES (${source.mediaId}, ${source.id}, ${encounter.id}, ${organizationId}, ${encounter.owner}, ${source.kind === "audio" ? "audio" : "image"}, ${source.mime || "application/octet-stream"}, ${source.byteSize || null}, ${source.createdAt})
         `;

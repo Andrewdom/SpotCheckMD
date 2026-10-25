@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { chown, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { assignLegacyCharts } from "../lib/legacy-import";
 import type { Database } from "../lib/store";
 import { closeDatabase, sql } from "../lib/database";
 import { transaction } from "../lib/store";
@@ -27,14 +28,18 @@ await mkdir(path.join(backup, "media"), { recursive: true, mode: 0o700 });
 await copyFile(sourceFile, path.join(backup, "db.json"));
 await mkdir(path.join(process.env.AURA_DATA_DIR || ".aura-data", "media"), { recursive: true, mode: 0o700 });
 for (const key of mediaKeys) {
-  await copyFile(path.join(source, `${key}.bin`), path.join(backup, "media", `${key}.bin`), constants.COPYFILE_EXCL);
+  const original = path.join(source, `${key}.bin`);
+  await copyFile(original, path.join(backup, "media", `${key}.bin`), constants.COPYFILE_EXCL);
   const target = path.join(process.env.AURA_DATA_DIR || ".aura-data", "media", `${key}.bin`);
-  await copyFile(path.join(source, `${key}.bin`), target, constants.COPYFILE_EXCL);
+  try { await copyFile(original, target, constants.COPYFILE_EXCL); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await readFile(original)).equals(await readFile(target))) throw error;
+  }
   if (process.getuid?.() === 0) await chown(target, 1001, 1001);
 }
 await transaction(db => {
   db.encounters = legacy.encounters.map(encounter => ({ ...encounter, owner: physicianId }));
-  db.ehrCharts = (legacy.ehrCharts || []).map(chart => ({ ...chart, owner: physicianId }));
+  db.ehrCharts = assignLegacyCharts(legacy.ehrCharts || [], physicianId);
   db.sessions = [];
 });
 console.log(`Imported legacy data assigned to physician ${physicianId}. Backup: ${backup}`);

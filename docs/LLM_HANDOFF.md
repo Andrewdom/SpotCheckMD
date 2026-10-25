@@ -221,7 +221,7 @@ validation. See `deploy/unraid/README.md` for operations and reboot recovery.
 
 ## Known limits and architectural direction
 
-Anonymous cookies and QR capabilities are not physician authentication. A typed clinician name does not prove identity; paired sessions can review/approve. Storage is local JSON/media with a process-local lock, unsuitable for multiple replicas. There is no real EHR connector, durable job queue, instant remote cancellation, validated conflict detector, full immutable evidence history, or validated specialty framework.
+QR pairing has been removed. Anonymous browser cookies still do not authenticate a physician; a typed clinician name does not prove identity, and anyone using the browser workspace can review/approve. Storage is local JSON/media with a process-local lock, unsuitable for multiple replicas. There is no real EHR connector, durable job queue, instant remote cancellation, validated conflict detector, full immutable evidence history, or validated specialty framework.
 
 No DICOM, 3D CT/MRI, whole-slide, PDF, video, lab, or vital-sign ingestion was added. CLEAR was discussed as a possible research direction; it has **not** been implemented. Its chest-X-ray approach cannot simply be claimed to generalize to other specialties, and a prompt listing concepts is not CLEAR.
 

@@ -6,7 +6,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const mime = await transaction(db => {
       const session = auth(db, request);
-      const e = db.encounters.find(v => (session.encounterId ? v.id === session.encounterId : v.owner === session.owner) && v.sources.some(s => s.mediaId === id || s.previewMediaId === id));
+      const e = db.encounters.find(v => v.owner === session.owner && v.sources.some(s => s.mediaId === id || s.previewMediaId === id));
       if (!e) throw new AppError(404, "Media not found.");
       const source = e.sources.find(s => s.mediaId === id || s.previewMediaId === id);
       return source?.previewMediaId === id ? "image/jpeg" : source?.mime || "application/octet-stream";

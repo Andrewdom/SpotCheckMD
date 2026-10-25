@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
-import QRCode from "qrcode";
-import { Activity, ArrowLeft, Camera, Check, ChevronRight, Clipboard, FileText, ImagePlus, Link2, LoaderCircle, Mic, ScanLine, ShieldCheck, Sparkles, Square, TriangleAlert, Trash2, Upload, X, ZoomIn } from "lucide-react";
+import { Activity, ArrowLeft, Camera, Check, ChevronRight, Clipboard, FileText, ImagePlus, LoaderCircle, Mic, ScanLine, ShieldCheck, Sparkles, Square, TriangleAlert, Trash2, Upload, X, ZoomIn } from "lucide-react";
 
 import { PATIENTS, composeNote, reviewBlockers, sectionLabels, type Encounter, type Finding } from "@/lib/domain";
 
@@ -31,8 +30,6 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [dropTarget, setDropTarget] = useState<"image" | "audio" | null>(null);
-  const [pairUrl, setPairUrl] = useState("");
-  const [qr, setQr] = useState("");
   const [photoZooms, setPhotoZooms] = useState<Record<string, number>>({});
   const [photoPans, setPhotoPans] = useState<Record<string, { x: number; y: number }>>({});
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
@@ -135,28 +132,15 @@ export default function Dashboard() {
     setEncounters(prev => [e, ...prev.filter(v => v.id !== e.id)]);
   }
   const reload = useCallback(async () => {
-    const pair = new URLSearchParams(location.search).get("pair");
-    if (pair) {
-      const response = await fetch(`/api/demo?pair=${encodeURIComponent(pair)}`, { cache: "no-store" });
-      const result = await response.json();
-      history.replaceState(null, "", location.pathname);
-      if (!response.ok) throw new Error(result.error);
-      update(result.encounter); setStage("capture");
-    } else {
-      let response = await fetch("/api/demo", { cache: "no-store" });
-      if (response.status === 401) {
-        await send("bootstrap", {});
-        response = await fetch("/api/demo", { cache: "no-store" });
-      }
-      if (!response.ok) throw new Error("Could not load the demo workspace.");
-      setEncounters((await response.json()).encounters);
+    let response = await fetch("/api/demo", { cache: "no-store" });
+    if (response.status === 401) {
+      await send("bootstrap", {});
+      response = await fetch("/api/demo", { cache: "no-store" });
     }
+    if (!response.ok) throw new Error("Could not load the demo workspace.");
+    setEncounters((await response.json()).encounters);
   }, []);
   useEffect(() => { void reload().catch(error => setMessage(error.message)); }, [reload]);
-  useEffect(() => {
-    if (!pairUrl) { setQr(""); return; }
-    void QRCode.toDataURL(pairUrl, { width: 224, margin: 2, color: { dark: "#12383b", light: "#ffffff" } }).then(setQr);
-  }, [pairUrl]);
   useEffect(() => {
     const video = videoRef.current;
     const camera = cameraStream.current;
@@ -250,7 +234,6 @@ export default function Dashboard() {
       const result = await send(action, { encounterId: active.current.id, revision: active.current.revision, ...payload });
       update(result.encounter);
       if (after) setStage(after);
-      if (action === "pair") setPairUrl(`${location.origin}/?pair=${encodeURIComponent(result.token)}`);
       if (action === "export" || action === "approve-send") setMessage("Approved note saved to this patient’s Demo EHR chart.");
       else if (action === "approve") setMessage("Approved demo draft. Any later edit revokes approval.");
       return true;
@@ -267,7 +250,7 @@ export default function Dashboard() {
   }
   async function create(patientId: string) {
     setBusy(true); setMessage("");
-    try { const result = await send("create", { patientId }); update(result.encounter); setPairUrl(""); setStage("capture"); }
+    try { const result = await send("create", { patientId }); update(result.encounter); setStage("capture"); }
     catch (error) { setMessage((error as Error).message); } finally { setBusy(false); }
   }
   async function deleteEncounter() {
@@ -405,7 +388,7 @@ export default function Dashboard() {
   return <div className="min-h-screen bg-[#f3f7f7] text-slate-800 selection:bg-teal-100">
     <header className="border-b border-slate-200 bg-white/90"><div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8"><div className="flex items-center gap-3"><span className="rounded-xl bg-[#11383c] p-2.5 text-teal-200"><Activity size={22} /></span><div><p className="text-lg font-bold tracking-[.14em]">AURA</p><p className="text-[10px] font-medium tracking-[.17em] text-teal-700">VISUAL SCRIBE</p></div></div><span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">Synthetic demo · no real patients</span></div></header>
     <main className="mx-auto max-w-7xl px-5 pb-16 pt-8 sm:px-8">
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-teal-700">Patient-linked documentation</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">{stage === "patients" ? "Encounter workspace" : stage === "chart" ? "Patient chart" : stage === "capture" ? "Capture an encounter" : "Review the evidence"}</h1><p className="mt-2 text-sm text-slate-500">Review the chart, capture the visit, and send the approved note to Demo EHR.</p></div>{(current || stage === "chart") && <button disabled={busy || recording} className={`${button} border border-slate-200 bg-white text-slate-600`} onClick={() => { setCurrent(null); active.current = null; setChartPatientId(""); setChartDirty(false); setFocusNoteId(undefined); setStage("patients"); setPairUrl(""); }}><ArrowLeft size={15} /> Encounters</button>}</div>
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-teal-700">Patient-linked documentation</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">{stage === "patients" ? "Encounter workspace" : stage === "chart" ? "Patient chart" : stage === "capture" ? "Capture an encounter" : "Review the evidence"}</h1><p className="mt-2 text-sm text-slate-500">Review the chart, capture on this device, and send the approved note to Demo EHR.</p></div>{(current || stage === "chart") && <button disabled={busy || recording} className={`${button} border border-slate-200 bg-white text-slate-600`} onClick={() => { setCurrent(null); active.current = null; setChartPatientId(""); setChartDirty(false); setFocusNoteId(undefined); setStage("patients"); }}><ArrowLeft size={15} /> Encounters</button>}</div>
       {message && <p role="alert" className="mb-5 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm text-teal-900">{message}</p>}
       {stage === "patients" && <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
         <section className={`${card} p-6`}><h2 className="flex items-center gap-2 text-lg font-semibold"><ScanLine size={19} className="text-teal-700" /> Start with a fictional patient</h2><p className="mt-2 text-xs text-slate-500">No identity check or clinical system is connected in this demo.</p><div className="mt-6 space-y-3">{PATIENTS.map(p => <button disabled={busy} key={p.id} onClick={() => { setCurrent(null); active.current = null; setChartPatientId(p.id); setFocusNoteId(undefined); setStage("chart"); }} className="flex w-full items-center gap-4 rounded-xl border border-slate-200 p-4 text-left transition hover:border-teal-400 hover:bg-teal-50"><span className="flex size-11 items-center justify-center rounded-xl bg-teal-100 text-sm font-bold text-teal-800">{p.initials}</span><span className="flex-1"><strong className="block text-sm">{p.name}</strong><small className="text-slate-500">{p.record} · {p.detail}</small></span><ChevronRight size={16} /></button>)}</div></section>
@@ -471,7 +454,7 @@ export default function Dashboard() {
       {current && stage !== "patients" && <>
         <div className={`${card} mb-6 flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5`}><div className="flex items-center gap-3"><span className="flex size-11 items-center justify-center rounded-xl bg-teal-100 font-bold text-teal-800">{patient?.initials}</span><div><p className="text-sm font-semibold">{patient?.name} <span className="ml-1 rounded bg-amber-50 px-1.5 py-1 text-[9px] uppercase text-amber-800">Fictional</span></p><p className="text-xs text-slate-500">{patient?.record} · {patient?.detail} · Encounter {current.id.slice(0, 8)}</p></div></div><div className="flex gap-2 text-xs font-semibold"><button disabled={busy || recording} onClick={() => { setFocusNoteId(undefined); setStage("chart"); }} className={`rounded-lg px-3 py-2 ${stage === "chart" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>Chart</button><button disabled={busy || recording} onClick={() => setStage("capture")} className={`rounded-lg px-3 py-2 ${stage === "capture" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>1 · Capture</button><button disabled={busy || recording} onClick={() => setStage("review")} className={`rounded-lg px-3 py-2 ${stage === "review" ? "bg-teal-800 text-white" : "bg-slate-100"}`}>2 · Review</button></div></div>
         {stage === "capture" && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
-          <div className="space-y-6"><ClinicalContextEditor encounter={current} disabled={busy || recording} onSave={context => void act("context", { context })} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Confirm before capture</h2><p className="mt-2 text-xs leading-5 text-slate-500">In a real deployment, QR pairing would require clinician authentication and an independently verified patient identity. This local demo uses fictional records only.</p><div className="mt-5 space-y-3"><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.patientConfirmed} onChange={e => void act("confirm", { confirmed: e.target.checked, consent: current.consent })} className="size-4 accent-teal-700" /> Patient and encounter confirmed</label><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.consent} onChange={e => void act("confirm", { confirmed: current.patientConfirmed, consent: e.target.checked })} className="size-4 accent-teal-700" /> All participants consented to recording and processing</label></div><button disabled={busy} onClick={() => void act("pair")} className={`${button} mt-5 border border-teal-200 bg-teal-50 text-teal-800`}><Link2 size={15} /> Create one-use QR link</button>{pairUrl && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs text-slate-600">Scan this QR on a phone within 5 minutes. Anyone holding it can open this fictional encounter.</p>{qr && <img src={qr} alt="One-use pairing QR code" className="my-3 h-48 w-48 rounded bg-white" />}<a className="break-all text-xs text-teal-700 underline" href={pairUrl}>{pairUrl}</a></div>}</section>
+          <div className="space-y-6"><ClinicalContextEditor encounter={current} disabled={busy || recording} onSave={context => void act("context", { context })} /><section className={`${card} p-5 sm:p-6`}><h2 className="text-base font-semibold">Confirm before capture</h2><p className="mt-2 text-xs leading-5 text-slate-500">Use this app directly in the phone browser to capture photos or audio on that device. The browser requests camera or microphone access when needed. This local demo uses fictional records only.</p><div className="mt-5 space-y-3"><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.patientConfirmed} onChange={e => void act("confirm", { confirmed: e.target.checked, consent: current.consent })} className="size-4 accent-teal-700" /> Patient and encounter confirmed</label><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={current.consent} onChange={e => void act("confirm", { confirmed: current.patientConfirmed, consent: e.target.checked })} className="size-4 accent-teal-700" /> All participants consented to recording and processing</label></div></section>
           <section className={card + " p-5 sm:p-6"}>
             <h2 className="flex items-center gap-2 text-base font-semibold">
               <Mic size={19} className="text-teal-700" />

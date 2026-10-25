@@ -39,6 +39,12 @@ The app accepts JPEG and PNG. Defaults are 50 MB and 60 megapixels for app uploa
 
 Preflight checks flag low resolution, extreme lighting, and low edge detail. These are heuristics, not image-quality certification. The model is asked for structured visible observations and limitations, not lesion diagnoses, malignancy estimates, measurements, or treatment recommendations. The schema and evidence checks can catch malformed output and invalid source references; they cannot guarantee clinical correctness. Certainty tags are not calibrated probabilities. A physician must inspect every original image and verify every proposed statement.
 
+## Evidence Replay
+
+On the review screen, **Replay evidence** opens a read-only view of where each note sentence came from. Selecting a sentence plays the cited span of the recording (from the stored word timings), highlights those words in the transcript, and opens the cited photo beside the model-written description it was based on. Colored routes link each source to its sentences by review outcome, and a seal shows whether the approved note's SHA-256 digest, recomputed in the browser, still matches the server record or was revoked by a later edit.
+
+It only re-arranges data the encounter already stores and fetches media through the existing session-checked media route. It draws no regions on photos, invents no timings, and treats provider word confidence as speech-recognition confidence, not clinical confidence. Transcripts without word-level timing (for example from the OpenAI fallback) show quotes without playback. The seal is display-only and the typed signature is not an authenticated identity. See `docs/evidence-replay.md` for how to use it and `docs/evidence-replay-plan.md` for the design record.
+
 ## Data and security boundaries
 
 PostgreSQL stores physician sessions, encounter state, transcripts, analysis jobs, review decisions, approved snapshots, audit events, and simulated EHR records. Private image and audio bytes remain under `.aura-data/media/` by default; `AURA_DATA_DIR` can override that location. Sessions last up to twelve hours and can coexist on multiple devices. The aggregate transaction layer and inference worker still support one web container.

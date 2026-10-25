@@ -123,4 +123,4 @@ Live AI, browser/phone capture, clinical evaluations, stale-analysis reproductio
 
 ## Post-review implementation note
 
-The access design above describes the earlier QR-pairing baseline. QR generation, redemption, and encounter-scoped paired sessions have since been removed. The current demo uses an anonymous browser workspace cookie; opening the app on another device creates a separate workspace. This does not authenticate a clinician or provide cross-device sharing.
+The access design above describes the earlier QR-pairing baseline. QR generation, redemption, and encounter-scoped paired sessions have since been removed. The anonymous workspace cookie that briefly replaced them has also been superseded: `main` now uses manually seeded physician accounts with Argon2id passwords and hashed PostgreSQL sessions, so the same account sees its encounters from phone and desktop. See `docs/postgres-auth.md`. This is demonstration access control, not a production identity provider.

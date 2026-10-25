@@ -27,6 +27,8 @@ DATABASE_URL='postgresql://spotcheckmd:<local secret>@127.0.0.1:55432/spotcheckm
 
 Set the same `DATABASE_URL` plus a random `AUTH_RATE_LIMIT_SECRET` in `.env.local`, then run `npm run dev`. There is no self-registration route.
 
+`AUTH_RATE_LIMIT_SECRET` keys the HMAC fingerprints stored in `login_attempts`, so raw usernames and client addresses are never persisted. Generate it with `openssl rand -hex 32`. Without it the app falls back to a fixed development value; `deploy/unraid/web-run.sh` refuses to start without one. Sign-in is throttled after 5 failures per account and client within 15 minutes, and after 20 failures per account from any client, because forwarded IP headers can be spoofed when no proxy overwrites them.
+
 ## Unraid preparation
 
 Do not run these commands until the pull request, legacy backup, and import assignment have been reviewed.

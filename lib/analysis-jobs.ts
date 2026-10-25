@@ -9,6 +9,13 @@ import { configuredTranscriptionProvider, transcriptionModel } from "./transcrip
 import { soapDocumentationMode } from "./transcription/soap";
 
 type ClaimedJob = { snapshot: Encounter; runId: string };
+
+// Redacted: application messages are fixed strings, but other errors may echo
+// provider responses, transcripts or media, so only their class is logged.
+function logJobError(context: string, runId: string | null, error: unknown) {
+  const detail = error instanceof AppError ? `${error.status} ${error.message}` : error instanceof Error ? error.name : typeof error;
+  console.error(`[analysis-worker] ${context}${runId ? ` run=${runId}` : ""}: ${detail}`);
+}
 const globalJobs = globalThis as unknown as { spotcheckAnalysisWorker?: Promise<void>; spotcheckAnalysisStarted?: boolean };
 
 async function claimNextJob(): Promise<ClaimedJob | null> {
@@ -86,7 +93,8 @@ async function processJob({ snapshot, runId }: ClaimedJob) {
       encounter.promptVersion = PROMPT_VERSION;
       changed(encounter, "analysis completed");
     });
-  } catch {
+  } catch (error) {
+    logJobError("job failed", runId, error);
     try {
       await transaction(db => {
         const encounter = db.encounters.find(item => item.id === snapshot.id && item.owner === snapshot.owner);
@@ -97,7 +105,8 @@ async function processJob({ snapshot, runId }: ClaimedJob) {
           changed(encounter, "analysis failed");
         }
       });
-    } catch {
+    } catch (storageError) {
+      logJobError("could not record failure", runId, storageError);
       // Leave the persisted processing record intact when storage is unavailable.
       // Startup recovery will return it to the queue after storage is restored.
     }
@@ -146,7 +155,8 @@ export async function startAnalysisWorker() {
       }
     });
     return kickAnalysisWorker();
-  } catch {
+  } catch (error) {
+    logJobError("startup recovery failed", null, error);
     globalJobs.spotcheckAnalysisStarted = false;
   }
 }

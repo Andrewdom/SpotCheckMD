@@ -63,9 +63,18 @@ function audioSpanFor(e: Encounter, artifactId: string, locator: { utteranceId: 
 
 export function findCharacteristic(e: Encounter, f: Finding, imageSourceId: string): ImageCharacteristic | undefined {
   if (!f.analysisRunId) return;
+  const visualEvidence = f.evidence.find(item => item.sourceId === imageSourceId && item.role !== "context");
+  if (!visualEvidence?.quote) return;
   for (const run of e.imageAnalyses || []) {
     if (run.runId !== f.analysisRunId || run.analysis.imageSourceId !== imageSourceId) continue;
-    const match = run.analysis.characteristics.find(item => item.description === f.originalText);
+    // A run can contain several analysis results for the same image (one per transcript window),
+    // and different results can use the same wording. Match every stored provenance field that the
+    // finding retained so replay never attaches a same-worded characteristic from another region.
+    const match = run.analysis.characteristics.find(item =>
+      item.description === f.originalText
+      && (!f.category || item.category === f.category)
+      && item.evidence.visibleRegion === visualEvidence.quote
+    );
     if (match) return { category: match.category, description: match.description, certainty: match.certainty, visibleRegion: match.evidence.visibleRegion, limitations: match.limitations };
   }
 }

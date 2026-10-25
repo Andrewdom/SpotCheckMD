@@ -53,7 +53,17 @@ export function useReplayAudio(audio: { mediaId: string; mime: string } | null) 
           if (generation !== generationRef.current) return;
           const url = URL.createObjectURL(new Blob([bytes], { type: mime || "audio/webm" }));
           urlRef.current = url;
-          elementRef.current = new Audio(url);
+          const element = new Audio(url);
+          element.preload = "metadata";
+          elementRef.current = element;
+          await new Promise<void>((resolve, reject) => {
+            element.addEventListener("loadedmetadata", () => resolve(), { once: true });
+            element.addEventListener("error", () => reject(new Error("Recording metadata unavailable")), { once: true });
+            element.load();
+          });
+          if (generation !== generationRef.current) return;
+          if (!Number.isFinite(element.duration) || element.duration <= 0) throw new Error("Recording duration unavailable");
+          setDurationMs(element.duration * 1000);
           setStatus("fallback");
         }
       } catch {
@@ -107,9 +117,16 @@ export function useReplayAudio(audio: { mediaId: string; mime: string } | null) 
       tick();
     } else if (element) {
       const from = Math.max(0, startMs - PAD_MS);
-      const to = endMs + PAD_MS;
+      const to = Math.min(element.duration * 1000, endMs + PAD_MS);
+      if (to <= from) return;
       element.currentTime = from / 1000;
-      await element.play().catch(() => {});
+      try {
+        await element.play();
+      } catch {
+        if (run === runRef.current) setStatus("error");
+        stop();
+        return;
+      }
       if (run !== runRef.current) { element.pause(); return; }
       const tick = () => {
         if (run !== runRef.current) return;

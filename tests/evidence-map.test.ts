@@ -78,6 +78,20 @@ test("visual findings find their characteristic by run, image and original wordi
   assert.equal(findCharacteristic(e, { ...visual, originalText: "different" }, image.id), undefined);
 });
 
+test("visual replay disambiguates identical wording using category and stored region evidence", () => {
+  const { e } = fixture();
+  const first = { id: "c1", category: "Appearance", description: "Visible color change", certainty: "uncertain" as const, limitations: "", evidence: { imageSourceId: image.id, visibleRegion: "upper-left area", transcriptSourceId: null, transcriptQuote: null } };
+  const second = { ...first, id: "c2", category: "Color", evidence: { ...first.evidence, visibleRegion: "lower-right area" } };
+  e.imageAnalyses = [
+    { runId: "run-1", provider: "medgemma", analysis: { imageSourceId: image.id, specialty: "general", imageType: "clinical photograph", anatomicalRegion: { value: "", source: "unknown", visuallyConfirmed: false, transcriptQuote: null }, characteristics: [first], reportedHistory: [], conflicts: [], limitations: [], requiresPhysicianReview: true }, model: "m", modelRevision: "r", latencyMs: 1, contextRange: { start: 0, end: 50 } },
+    { runId: "run-1", provider: "medgemma", analysis: { imageSourceId: image.id, specialty: "general", imageType: "clinical photograph", anatomicalRegion: { value: "", source: "unknown", visuallyConfirmed: false, transcriptQuote: null }, characteristics: [second], reportedHistory: [], conflicts: [], limitations: [], requiresPhysicianReview: true }, model: "m", modelRevision: "r", latencyMs: 1, contextRange: { start: 50, end: 100 } },
+  ];
+  const visual = finding({ id: "f1", section: "O", category: "Color", origin: "visual", text: second.description, originalText: second.description, analysisRunId: "run-1", evidence: [{ sourceId: image.id, quote: second.evidence.visibleRegion, role: "visual" }] });
+
+  assert.equal(findCharacteristic(e, visual, image.id)?.visibleRegion, "lower-right area");
+  assert.equal(findCharacteristic(e, { ...visual, evidence: [{ sourceId: image.id, quote: "unstored region", role: "visual" }] }, image.id), undefined);
+});
+
 test("sentence membership and order match composeNote", () => {
   const { e } = fixture();
   const quote = (id: string) => [{ sourceId: "transcript-1", quote: `quote ${id}` }];

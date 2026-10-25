@@ -4,8 +4,8 @@ SpotCheckMD is a hackathon research prototype for physician-reviewed, evidence-l
 
 The application uses **MedGemma 1.5 4B as its only image-analysis provider**. It does not switch to another image model if MedGemma fails. Audio transcription is a separate, provider-selected feature; AssemblyAI Medical Mode is supported, and legacy OpenAI transcription/documentation options remain configurable. See [transcription setup](docs/transcription.md).
 
-Demo Website: https://spotcheckmd.goob3r.org/
-Username: demo-physician
+Demo Website: https://spotcheckmd.goob3r.org/  
+Username: demo-physician  
 Password: SpotCheckDemo2026!
 
 > **Research prototype only.** Use fictional encounters and staged, non-patient images and audio, or other media with explicit authorization for the intended processing. This is not a clinically validated product, authenticated EHR, or HIPAA-compliant deployment. Do not use it for diagnosis, treatment decisions, or real patient records.

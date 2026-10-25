@@ -7,11 +7,12 @@ This deployment runs the complete Next.js application beside the existing MedGem
 ```text
 browser --HTTPS--> Cloudflare Tunnel --HTTP loopback--> 127.0.0.1:3340 SpotCheckMD web
                                                         |
+                                                        +--PostgreSQL loopback--> 127.0.0.1:5433
                                                         +--HTTP loopback + bearer auth--> 127.0.0.1:8321 MedGemma
                                                         +--HTTPS--> AssemblyAI
 ```
 
-Both application ports remain bound to server loopback. `CloudflaredTunnel` uses host networking and publishes only the selected SpotCheckMD hostname. The raw MedGemma API, Docker, SSH, and Unraid administration are not routes for the SpotCheckMD hostname.
+All application and database ports remain bound to server loopback. `CloudflaredTunnel` uses host networking and publishes only the selected SpotCheckMD hostname. PostgreSQL, the raw MedGemma API, Docker, SSH, and Unraid administration are not routes for the SpotCheckMD hostname.
 
 The web container uses host networking because the established MedGemma container publishes only to host loopback. This preserves the existing MedGemma container and avoids adding a LAN or public inference listener. MedGemma bearer authentication remains required.
 
@@ -24,9 +25,13 @@ The web container uses host networking because the established MedGemma containe
   cache/               # writable Next.js runtime cache
   logs/                # retained build logs
   repository/          # deployment checkout of approved main
+/mnt/user/appdata/spotcheckmd-postgres/
+  config/postgres.env  # mode 0600; database credentials
+  data/                # PostgreSQL data directory
+  backups/             # pg_dump and matching media backups
 ```
 
-The container mounts `data` at `/data` and sets `AURA_DATA_DIR=/data`. Rebuilding or replacing the web container does not remove saved demo encounters. Back up this directory according to the server owner's normal appdata policy.
+The container mounts `data` at `/data` and sets `AURA_DATA_DIR=/data`. PostgreSQL stores authenticated workspace state; `/data/media` stores private image and audio bytes. Rebuilding either container does not remove its persistent data. Back up the PostgreSQL database and matching media tree together.
 
 ## First installation
 
@@ -38,9 +43,12 @@ git clone https://github.com/Andrewdom/SpotCheckMD.git /mnt/user/appdata/spotche
 cd /mnt/user/appdata/spotcheckmd-web/repository
 git checkout main
 deploy/unraid/web-init-config.sh
+deploy/unraid/postgres-init-config.sh
+deploy/unraid/postgres-run.sh
+deploy/unraid/postgres-migrate.sh
 ```
 
-`web-init-config.sh` securely copies the existing MedGemma bearer value from the running `spotcheckmd-medgemma` container into the private web env file without printing it. It does not rotate the key. Edit the private file locally on the server and add the permanent AssemblyAI key:
+`web-init-config.sh` securely copies the existing MedGemma bearer value from the running `spotcheckmd-medgemma` container into the private web env file without printing it. `postgres-init-config.sh` creates a random database password and login-throttle secret without printing them. Edit the private web file locally on the server and add the permanent AssemblyAI key:
 
 ```sh
 nano /mnt/user/appdata/spotcheckmd-web/config/web.env
@@ -48,6 +56,8 @@ chmod 600 /mnt/user/appdata/spotcheckmd-web/config/web.env
 ```
 
 Do not paste the key into chat, a command argument, Docker labels, Git, or a `NEXT_PUBLIC_` variable. `ASSEMBLYAI_API_KEY` remains server-side. The browser requests a short-lived streaming token from the authenticated application route.
+
+Seed the first physician from an interactive server shell only after migrations and the legacy import assignment have been reviewed. See [physician authentication and PostgreSQL](postgres-auth.md). Do not expose port 5433 beyond loopback.
 
 Build and start the initial reviewed revision:
 
@@ -78,9 +88,9 @@ Cloudflare terminates HTTPS, which enables browser camera and microphone APIs. L
 
 `Analyze & review` creates a persistent queued job and returns immediately. The browser polls the encounter while one in-process worker serializes jobs for MedGemma's single inference slot. The job owns the encounter revision and source snapshot, so later edits or consent changes cancel it and prevent stale results from being attached.
 
-The worker retries MedGemma HTTP 429 responses with bounded backoff. A server restart changes a persisted `processing` job back to `queued`; it never marks an interrupted inference complete. On successful completion, the existing evidence validation, source IDs, model revision, prompt version, uncertainty, warnings, and physician review gates remain attached to the stored results.
+The worker retries MedGemma HTTP 429 responses with bounded backoff. PostgreSQL stores queued/running/completed/failed/cancelled job lifecycle rows. A server restart changes an interrupted job back to queued; it never marks interrupted inference complete. On successful completion, the existing evidence validation, source IDs, model revision, prompt version, uncertainty, warnings, and physician review gates remain attached to the stored results.
 
-This mechanism is deliberately single-node and single-container. Do not run multiple web replicas against the JSON store.
+This mechanism is deliberately single-node and single-container because MedGemma has one inference slot and the aggregate compatibility layer uses a database advisory lock. Do not run multiple web workers until job claiming is redesigned and evaluated.
 
 ## Updates and rollback
 
@@ -108,6 +118,7 @@ Routine checks do not print credentials:
 
 ```sh
 curl -fsS http://127.0.0.1:3340/api/health
+docker inspect spotcheckmd-postgres --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
 docker inspect spotcheckmd-web --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
 docker stats --no-stream spotcheckmd-web spotcheckmd-medgemma
 docker logs --tail 100 spotcheckmd-web
@@ -122,6 +133,7 @@ docker exec spotcheckmd-web node -e 'fetch(process.env.MEDGEMMA_URL+"/health",{h
 Failure categories:
 
 - Web health fails: inspect the web container logs and writable volume ownership.
+- Database health fails: keep the web container stopped, inspect `spotcheckmd-postgres`, credentials and applied migrations; do not fall back to anonymous JSON storage.
 - MedGemma health is 401: the private web env key does not match the existing service key.
 - MedGemma health cannot connect: confirm `spotcheckmd-medgemma` is running and still publishes `127.0.0.1:8321`.
 - Analysis stays queued: check the web logs and confirm the worker has one running web instance.

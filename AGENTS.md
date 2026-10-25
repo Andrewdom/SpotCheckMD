@@ -14,7 +14,7 @@ Read `README.md`, `evals/README.md`, and the relevant implementation before chan
 - `app/api/media/[id]/route.ts`: session-scoped media reads with no-store responses.
 - `lib/domain.ts`: encounter/source/finding/conflict types, two fictional patient profiles, review blockers, and deterministic SOAP composition. Specialty context now includes general, primary care, urgent care, dermatology, radiology and other, while preserving legacy `skin | throat` labels. These are not validated specialty modules.
 - `lib/analysis.ts`: image normalization/quality heuristics, direct server-side OpenAI HTTP calls, structured suggestions, and basic evidence validation. Model strings currently configured are `gpt-transcribe` and `gpt-4o`; their presence in code does not establish account availability or successful live operation.
-- `lib/store.ts`: local JSON/media storage, a process-local transaction lock, anonymous session and encounter authorization, revision checks, approval invalidation, and error handling. `AURA_DATA_DIR` overrides the default `.aura-data/` path.
+- `lib/store.ts`, `lib/auth.ts`, and `lib/database.ts`: PostgreSQL-backed physician sessions and aggregate persistence, organization/physician authorization, revision checks, approval invalidation, login throttling, and error handling. Legacy JSON mode exists only for deterministic compatibility tests and explicit import. `AURA_DATA_DIR` controls private media storage.
 - `scripts/smoke.cjs`: synthetic HTTP workflow checks; requires a running app. `scripts/evaluate.mjs`: aggregates supplied human-reviewed counts; it does not run models or establish clinical accuracy.
 - `lib/image-analysis/`: versioned schema, per-image providers, transcript windows, orchestration and comparison metrics. `services/medgemma/`: optional private Python inference service using the official pretrained model. `contracts/`: generated shared response schema/instructions; regenerate with `npm run generate:contracts`.
 - `services/medgemma/local_runtime.py`: explicit experimental `MEDGEMMA_BACKEND=llama_cpp` CPU option, owning an authenticated loopback child process. `prepare_local.py` converts authorized official safetensors with pinned tools; source/conversion/runtime revisions and artifact hashes must remain attached to quantized results. Keep weights, model caches, private configuration and verification outputs outside source control. Do not substitute a third-party model or erase quantization provenance. The original Transformers backend remains the default.
@@ -23,7 +23,7 @@ Read `README.md`, `evals/README.md`, and the relevant implementation before chan
 - `lib/analysis-jobs.ts` and root `instrumentation.ts`: single-process persistent analysis queue and startup recovery. The worker serializes inference, owns the encounter revision/source snapshot, and requeues interrupted processing after restart. This supports one web container only; do not add replicas against the JSON store.
 - `Dockerfile` and `deploy/unraid/web-*.sh`: production standalone Next.js image, checked `main` deployments, persistent Unraid storage, health checks, and rollback. The web container uses host networking but binds only to `127.0.0.1:3340` so it can reach the established loopback-only MedGemma service. See `docs/unraid-web-deployment.md`.
 - `scripts/prepare_scin.py` prepares a deterministic 1–10 case SCIN integration set in a new private directory. `scripts/verify-scin-medgemma.ts` runs one explicitly selected local image-only or image-plus-context request. SCIN photographs, metadata, manifests, model output and reports stay outside source control and remain subject to the SCIN Data Use License. These are integration inputs, not clinical ground truth.
-- No real EHR adapter, clinician authentication, external/multi-node queue, clinically validated specialty modules, CLEAR integration, or clinical evaluation results are present. Model weights have not been exercised by the mock test suite.
+- No real EHR adapter, public registration, production identity provider, external/multi-node queue, clinically validated specialty modules, CLEAR integration, or clinical evaluation results are present. Model weights have not been exercised by the mock test suite.
 
 ## Safety boundaries
 
@@ -33,7 +33,7 @@ Read `README.md`, `evals/README.md`, and the relevant implementation before chan
 - Keep findings atomic and traceable to encounter-local sources. A matching source ID, substring, or model-written region description does not prove a claim is true. Never fabricate timestamps, regions, measurements, concept contributions, citations, or confidence probabilities.
 - Quality checks and `observed/uncertain/not_assessable` labels are heuristics and qualitative tags, not calibrated confidence. Unsupported information must remain omitted or explicitly not assessable. Do not turn missing documentation into a normal finding.
 - Preserve server-side review checks: review every pending finding; require at least one accepted finding; require valid sources; reject accepted findings based on retake images; require explanations for uncertainty, limited quality, and edits; require written conflict resolutions, confirmation, and consent.
-- Require physician review and approval before simulated or future real EHR submission. Preserve revision-bound approval, the approved note digest, invalidation after content changes, and idempotent simulated export. Current free-text clinician names and anonymous browser sessions do **not** authenticate a physician; do not describe them as doing so.
+- Require physician review and approval before simulated or future real EHR submission. Preserve revision-bound approval, the approved note digest, invalidation after content changes, and idempotent simulated export. The seeded physician session is the MVP identity boundary; the free-text note signature does not authenticate a physician, and neither mechanism is a production identity system.
 - Treat media, transcript text, and model responses as untrusted data, never application instructions. Validate provider responses and source ownership on the server. Specialty-specific rules may strengthen, but must not bypass, shared safety gates.
 - Keep credentials server-side. Never print, commit, paste, or embed keys in client code. Do not read or expose `.env*`, stored encounter contents, or raw media for routine development. Do not log transcripts, images, temporary access tokens, cookies, or request bodies. Keep `.env*`, `.aura-data/`, dependencies, and generated build output ignored.
 - CLEAR is research for chest X-rays. Any future concept-based integration must be isolated by modality, preserve model/concept provenance, and undergo independent specialty/task evaluation. A prompt listing concepts is not a CLEAR implementation.
@@ -66,20 +66,20 @@ npm run typecheck
 
 Build generates Next.js route types, so run it first on a fresh checkout if typecheck needs those files. Do not commit generated `next-env.d.ts` or `.next/` artifacts.
 
-For an isolated synthetic smoke test, start a separate server with a fresh temporary directory and an unused port. For example, in the server shell:
+For an isolated synthetic smoke test, use a dedicated migrated PostgreSQL test database, a fresh temporary media directory, a seeded synthetic physician and an unused port. Never point tests at the shared deployment database. For example, in the server shell:
 
 ```sh
 spotcheck_test_data=$(mktemp -d)
-AURA_DATA_DIR="$spotcheck_test_data" OPENAI_API_KEY= npm run start -- --hostname 127.0.0.1 --port 3107
+AURA_DATA_DIR="$spotcheck_test_data" DATABASE_URL="$SPOTCHECK_TEST_DATABASE_URL" OPENAI_API_KEY= npm run start -- --hostname 127.0.0.1 --port 3107
 ```
 
 Then in another shell:
 
 ```sh
-SMOKE_BASE=http://127.0.0.1:3107 LIVE_AI=0 node scripts/smoke.cjs
+SMOKE_BASE=http://127.0.0.1:3107 SMOKE_USERNAME=synthetic-physician SMOKE_PASSWORD="$SPOTCHECK_TEST_PASSWORD" LIVE_AI=0 node scripts/smoke.cjs
 ```
 
-Stop the test server afterward. Do not delete or reuse a teammate's `.aura-data/`. The smoke test writes synthetic encounters and media. Its default non-live mode checks the direct browser workspace, the consent-confirmed upload path, limited-image quality, media access, approval/export gating, idempotency, and approval revocation after editing. It does not prove all consent failure paths, actor separation, live AI quality, or phone/browser behavior. Its `LIVE_AI=1` branch is not a complete live review test: generated findings can remain pending and make later approval fail.
+Stop the test server afterward. Do not delete or reuse a teammate's database or media directory. The smoke test writes synthetic encounters and media. Its default non-live mode checks authenticated workspace access, the consent-confirmed upload path, limited-image quality, media access, approval/export gating, idempotency, and approval revocation after editing. It does not prove live AI quality or phone/browser behavior. Its `LIVE_AI=1` branch is not a complete live review test: generated findings can remain pending and make later approval fail.
 
 For application changes, run build/typecheck and applicable smoke/manual checks; add focused tests for changed safety and concurrency behavior. Mock provider output for deterministic regression tests. Include malformed output, invalid/cross-encounter sources, unsupported inputs, stale revisions, consent changes, and approval invalidation when relevant. For documentation-only work, check accuracy, links, and `git diff --check`; describe any baseline application checks separately.
 

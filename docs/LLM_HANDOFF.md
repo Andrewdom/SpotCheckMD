@@ -14,7 +14,7 @@ The owner most recently requested that testing stop after the second SCIN case p
 
 SpotCheckMD is a multimodal documentation assistant that combines physician–patient conversations and supported clinical images into structured, evidence-linked SOAP notes for physician review. It should accommodate primary care, urgent care, dermatology, and future specialty workflows without hard-coding the architecture around one specialty.
 
-This is a hackathon research prototype. Existing UI/package/storage names still use **Aura Visual Scribe**; do not silently rename identifiers or migrate data. Specialty choices are context controls, not validated specialty algorithms. No HIPAA compliance, clinical validation, diagnostic accuracy, or fairness has been established.
+This is a hackathon research prototype. The visible UI uses **Spot Check MD** branding. Package, storage, and legacy compatibility identifiers still use **Aura Visual Scribe** names; do not silently rename those identifiers or migrate data. Specialty choices are context controls, not validated specialty algorithms. No HIPAA compliance, clinical validation, diagnostic accuracy, or fairness has been established.
 
 Non-negotiable boundaries:
 

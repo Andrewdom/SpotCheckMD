@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-SpotCheckMD is a hackathon research prototype for physician-reviewed, evidence-linked multimodal SOAP documentation across specialties. The existing UI, package name, cookie names, and storage use the earlier **Aura Visual Scribe** branding. Do not silently rename these identifiers or migrate stored data as part of unrelated work.
+SpotCheckMD is a hackathon research prototype for physician-reviewed, evidence-linked multimodal SOAP documentation across specialties. The visible UI uses **Spot Check MD** branding. The package name, legacy cookie fallback, and storage configuration retain earlier **Aura Visual Scribe** identifiers for compatibility; do not silently rename those identifiers or migrate stored data as part of unrelated work.
 
 Read `README.md`, `evals/README.md`, and the relevant implementation before changing behavior. `docs/architecture-review.md` records the initial assessment and proposed architecture; proposals are not implemented capabilities. The team has authorized the MedGemma 1.5 contextual image-analysis feature on `feature/medgemma-contextual-analysis`. See `docs/medgemma.md` for implementation/setup. Further feature priorities still require agreement; explain planned application changes first.
 

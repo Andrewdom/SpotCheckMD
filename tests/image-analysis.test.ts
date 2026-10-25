@@ -144,7 +144,7 @@ test("approval and deterministic SOAP only finalize accepted evidence", async ()
   e.sources[0].quality!.status = "retake"; assert.ok(reviewBlockers(e).some(v => /retake/.test(v)));
 });
 test("encounter edits cancel an owned run and revoke approval", () => {
-  const e = encounter(); e.analysis = "running"; e.activeAnalysis = { id: "run", expiresAt: Date.now() + 1000 };
+  const e = encounter(); e.analysis = "running"; e.activeAnalysis = { id: "run", status: "processing", queuedAt: new Date().toISOString(), attempts: 1, expiresAt: Date.now() + 1000 };
   changed(e, "clinical context updated"); assert.equal(e.analysis, "none"); assert.equal(e.activeAnalysis, undefined); assert.equal(e.approval, null);
 });
 test("MedGemma transport validates model identity, structured data and timeout failures", async () => {

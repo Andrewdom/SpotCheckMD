@@ -16,13 +16,23 @@ export function medgemmaProvider(fetcher: typeof fetch = fetch): ImageProvider {
     const timeout = Number(process.env.MEDGEMMA_TIMEOUT_MS || 120000);
     if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 600000) throw new AppError(503, "MedGemma timeout configuration is invalid; no fallback was used.");
     try {
-      const form = new FormData();
-      form.append("metadata", JSON.stringify({ imageSourceId: input.image.id, mime: input.image.mime, quality: input.image.quality, context: input.context, transcript: input.transcript }));
-      form.append("image", new Blob([new Uint8Array(input.image.bytes)], { type: input.image.mime }), input.image.mime === "image/png" ? "image.png" : "image.jpg");
-      const response = await fetcher(new URL("analyze", endpoint.endsWith("/") ? endpoint : `${endpoint}/`), {
-        method: "POST", redirect: "error", signal: AbortSignal.timeout(timeout),
-        headers: { Authorization: `Bearer ${key}` }, body: form,
-      });
+      let response: Response | undefined;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const form = new FormData();
+        form.append("metadata", JSON.stringify({ imageSourceId: input.image.id, mime: input.image.mime, quality: input.image.quality, context: input.context, transcript: input.transcript }));
+        form.append("image", new Blob([new Uint8Array(input.image.bytes)], { type: input.image.mime }), input.image.mime === "image/png" ? "image.png" : "image.jpg");
+        response = await fetcher(new URL("analyze", endpoint.endsWith("/") ? endpoint : `${endpoint}/`), {
+          method: "POST", redirect: "error", signal: AbortSignal.timeout(timeout),
+          headers: { Authorization: `Bearer ${key}` }, body: form,
+        });
+        if (response.status !== 429) break;
+        await response.body?.cancel();
+        if (attempt === 3) throw new AppError(503, "MedGemma remained busy after bounded retries; no fallback was used.");
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 30000) : 10000 * (attempt + 1);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      if (!response) throw new AppError(502, "MedGemma is unreachable; no fallback was used.");
       if (!response.ok) {
         const reported = response.headers.get("x-spotcheckmd-failure-stage");
         const allowed = new Set(["image decoding", "generation", "JSON parsing", "schema validation", "evidence validation"]);

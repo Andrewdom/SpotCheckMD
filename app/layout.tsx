@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Aura — Visual Scribe",
-  description: "A multimodal medical scribe interface prototype. Synthetic demo only.",
+  title: "Aura — Clinical Workspace",
+  description: "A physician-reviewed multimodal clinical documentation workspace.",
   robots: { index: false, follow: false },
 };
 
